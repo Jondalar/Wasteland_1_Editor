@@ -1,0 +1,4 @@
+# Runtime dependencies. Python 3.10 or newer.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+Pillow==11.0.0

@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wasteland Editor</title>
+  <link rel="stylesheet" href="style.css?v=__WL_VERSION__">
+</head>
+<body>
+  <header>
+    <h1>Wasteland Editor <span class="ver">__WL_VERSION__</span></h1>
+    <!-- Only ever shown for a non-C64 data root; init() fills it from /api/health. -->
+    <span id="machine-badge" hidden></span>
+    <nav class="tabs" id="tabs">
+      <button data-tab="areas" class="active" title="one area at a time: the map, its physics, its scripts, its flow">Areas</button>
+      <button data-tab="world" title="what the game already has: the blocks and patterns you build out of, tilesets, portraits, the teleport table, the starting party">World</button>
+      <!-- Play is not an editor view but a running machine, so it sits apart. -->
+      <span class="tabs-gap"></span>
+    </nav>
+    <span id="status" class="muted"></span>
+    <span id="git-badge" class="git-badge" title="which backend + git state — click to sync">…</span>
+  </header>
+
+  <!-- ═══════════════ MAP TAB ═══════════════ -->
+  <!-- ONE control row for the whole Areas tab. View, Edit and Flow are three ways to look at the
+       SAME area, so the area picker and the mode switch sit ABOVE all three and never move; only
+       the view-specific tail after them swaps. Two Area dropdowns for one choice was the bug. -->
+  <div id="areas-bar" class="controls">
+    <label><span>Area</span> <select id="area-select"><option>loading…</option></select></label>
+    <button id="new-area-btn" class="mini">＋ area</button>
+    <div class="mode-switch" id="mode-switch">
+      <button data-mode="view" class="active">View</button>
+      <button data-mode="edit">Edit</button>
+      <button data-mode="flow" title="the area's script events — chains of cell states, grouped">Events</button>
+    </div>
+    <span id="areas-map-tail" class="ctl-tail">
+      <label class="layer-toggle"><input type="checkbox" id="show-transitions"> op colours</label>
+      <label class="layer-toggle"><input type="checkbox" id="show-hooks" checked> script hooks ⚡</label>
+      <label class="layer-toggle"><input type="checkbox" id="show-mutations"> script arrows</label>
+      <label class="layer-toggle"><input type="checkbox" id="show-solid"> solid overlay</label>
+      <span class="zoom-ctl">zoom <button id="zoom-out">−</button><span id="zoom-val">32</span><button id="zoom-in">+</button><button id="zoom-fit" title="fit the map to the window">⤢ fit</button></span>
+      <button id="undo-btn" class="mini" title="undo the last saved edit (⌘/Ctrl+Z)">↶ undo</button>
+      <span id="cell-readout" class="info coord"
+            title="the cell under the cursor — column, row. Keeps the last one when you leave the map.">—</span>
+      <span id="area-info" class="info"></span>
+      <span id="dirty" class="dirty" hidden>● unsaved</span>
+    </span>
+    <span id="areas-flow-tail" class="ctl-tail" hidden>
+      <span id="flow-count" class="muted small"></span>
+      <div class="mode-switch" id="ev-shape">
+        <button data-shape="flow" class="active" title="the chain as a flowchart, top down">Flow</button>
+        <button data-shape="outline" title="the chain as an indented outline">Outline</button>
+      </div>
+      <span class="muted small">one area's events — a cell's state followed through its chain: fight → loot sack → next round</span>
+    </span>
+  </div>
+
+  <section id="tab-map" class="tab active">
+    <main>
+      <!-- LEFT: AREA / scene-level data (tabbed; later also editable: prose, grp16 code, …) -->
+      <aside id="area-panel">
+        <div class="mode-switch panel-tabs" id="area-tabs">
+          <button data-ap="data" class="active" title="tileset · foes · legend">Data</button>
+          <button data-ap="script" title="area-wide script records + prose (scene level)">Script</button>
+          <button data-ap="text" title="every text of this area — messages, foe names, hire lines">Text</button>
+          <button data-ap="combat" title="this area's fight vocabulary — one line per weapon class">Combat</button>
+          <button data-ap="services" title="shops, doctors, bank — portrait, texts, wares, prices">Services</button>
+          <button data-ap="code" title="grp16 — the area's own 6502 event code">Code</button>
+        </div>
+        <div class="ap ap-combat" hidden>
+          <h2>Combat <span class="muted small">what this area says during a fight</span></h2>
+          <div class="muted small" style="margin-bottom:8px">
+            Every area carries the same 34-slot vocabulary and words it its own way. The engine
+            reaches it through <code>desc+$37</code>, not by string id — which is why eleven areas
+            park it past 127 where nothing could name it.
+          </div>
+          <div id="cb-panel" class="muted small">load an area…</div>
+        </div>
+        <div class="ap ap-services" hidden>
+          <h2>Services <span id="svc-count" class="muted small"></span></h2>
+          <div class="muted small" style="margin-bottom:6px">
+            Every shop / doctor / bank of this area. Reached through an op-A door, so they have no
+            cell of their own. Editing writes the record and relocates it.
+          </div>
+          <div id="svc-list">…</div>
+        </div>
+        <!-- Every section is a CARD (.pcard), the same frame the Script chain uses for its beats.
+             Ten headings in one flat scroll read as one long thing; boxed, the eye finds "World"
+             or "Area foes" without reading. -->
+        <div class="ap ap-data">
+          <section class="pcard">
+            <h2>Record <span id="rec-info" class="muted small"></span>
+              <button id="rec-history-btn" class="mini" title="save history of this record (physique/script/NPCs/texts) — restore any earlier version">⟲</button></h2>
+            <div id="rec-history-wrap" hidden>
+              <div class="muted small">record history · ⟲ = restore (map stays as-is)</div>
+              <div id="rec-history" class="history"></div>
+            </div>
+            <div id="rec-panel" class="rec-panel"></div>
+          </section>
+          <section class="pcard">
+            <h2>Look <span class="muted small">tileset, and what lies beyond the edge</span></h2>
+            <label class="panel-row"><span>tileset</span> <select id="area-gfx"></select></label>
+            <label class="panel-row" title="drawn beyond the map edge — the engine reads descriptor $33"><span>off-map tile</span>
+              <input id="area-fill" type="number" min="0" max="95" step="1" style="width:56px">
+              <canvas id="area-fill-prev" width="24" height="24" class="fill-prev" title="preview of the off-map tile"></canvas>
+              <span class="muted small">$00 = empty/black</span></label>
+          </section>
+          <!-- WORLD: the descriptor bytes no cell points at. The random-encounter setup lives here
+               and was invisible until 0.8.93 — which is why "why does the desert feel different"
+               had no answer inside the editor. -->
+          <section class="pcard">
+            <h2>World <span class="muted small">how the area behaves when nobody steps on anything</span></h2>
+            <div id="world-sum" class="muted small" style="margin-bottom:6px">load an area…</div>
+            <div id="world-panel"></div>
+            <div id="world-events"></div>
+          </section>
+          <section class="pcard">
+            <h2>Area foes <span class="muted small">click to edit · name, look, toughness</span></h2>
+            <div id="npc-list" class="npc-list"></div>
+            <div class="btns"><button id="foe-add" class="mini">＋ Foe</button></div>
+            <div id="foe-edit"></div>
+          </section>
+          <section class="pcard">
+            <h2>NPCs <span class="muted small">spawn on their marker cell — click to edit</span></h2>
+            <div id="hire-list" class="npc-list"></div>
+            <h2>Service portraits <span class="muted small">shop · doctor · bank · revive · talk — click to open the Services tab</span></h2>
+            <div id="svc-portraits" class="npc-list"></div>
+            <h2 id="orph-head" hidden>Unreferenced NPC records <span class="muted small">exist in grp17, but no encounter spawns them</span></h2>
+            <div id="orph-list" class="npc-list"></div>
+            <div class="btns"><button id="npc-add" class="mini">＋ NPC</button></div>
+            <div id="npc-edit"></div>
+          </section>
+          <!-- Teleport is one fact ABOUT this area — can the party jump here, and where do they
+               land — not a workplace of its own. It was a seventh tab for a two-line answer. -->
+          <section class="pcard">
+            <h2>Teleport target <span class="muted small">can the party jump here, and where they land</span></h2>
+            <div id="tp-panel" class="tp-panel muted small">load an area…</div>
+          </section>
+          <section class="pcard">
+            <h2>Op-type legend</h2>
+            <ul id="legend"></ul>
+          </section>
+        </div>
+        <div class="ap ap-script" hidden>
+          <h2>Story <span class="muted small">what the player experiences — click a beat to edit it</span>
+            <label class="mini" id="chain-dbg-wrap"><input type="checkbox" id="chain-dbg"> records</label></h2>
+          <div id="chain-gate" class="gate"></div>
+          <div id="chain-list" class="mut-list muted small">load an area…</div>
+          <div id="chain-edit"></div>
+          <h2>Scripted changes <span id="mut-count" class="info"></span>
+            <span class="muted small">map rewrites, by source cell</span></h2>
+          <div id="mut-list" class="mut-list muted small">load an area…</div>
+        </div>
+        <div class="ap ap-text" hidden>
+          <h2>Texts <span id="txt-count" class="info"></span>
+            <button id="txt-save" class="mini" disabled>Save</button>
+            <button id="txt-revert" class="mini" disabled>Revert</button></h2>
+          <div id="txt-budget" class="txt-budget"></div>
+          <div id="txt-codes" class="txt-codes"></div>
+          <div class="btns"><button id="txt-add" class="mini">＋ string</button></div>
+          <div id="txt-list" class="txt-list muted small">load an area…</div>
+          <h2>Foe names <span class="muted small">desc+$02 (read-only)</span></h2>
+          <div id="txt-foes" class="muted small"></div>
+        </div>
+        <div class="ap ap-code" hidden>
+          <h2>Code <span class="muted small">grp16 — per-area 6502 events</span></h2>
+          <div id="code-list" class="muted small">load an area…</div>
+        </div>
+      </aside>
+
+      <div id="map-pane"><canvas id="map" width="512" height="512"></canvas></div>
+
+      <!-- RIGHT: CELL editor (subset tabs Map/Physique/Script live HERE, edit mode only) -->
+      <aside id="cell-panel">
+        <!-- Says what this column is FOR right now. Three strips decide it (top mode, this one,
+             and the tool row below), and until 0.8.132 two of them silently lost their highlight —
+             so the column could be read-only with nothing on screen admitting it. -->
+        <div id="cell-scope" class="pane-scope"></div>
+        <!-- "Script" here collided with the LEFT panel's Script tab: that one is the area's chains,
+             this one is one cell. Named for what it edits. -->
+        <div class="mode-switch panel-tabs" id="subset-switch" hidden>
+          <button data-subset="map" class="active" title="paint tiles (graphics)">Tiles</button>
+          <button data-subset="physique" title="paint solidity (walls) on the op layer">Walls</button>
+          <button data-subset="script" title="inspect and edit ONE cell's script / logic">Cell</button>
+        </div>
+        <!-- cell inspector: VIEW + EDIT/Cell -->
+        <div class="lp lp-cell">
+          <section class="pcard">
+            <h2>Cell <span id="cell-coord" class="info"></span></h2>
+            <div id="cell-inspect" class="muted">click a cell to inspect it — the coordinate under
+              the cursor is in the bar above</div>
+            <div id="cell-edit"></div>
+            <div id="cell-addop"></div>
+          </section>
+        </div>
+        <!-- EDIT / Map: tile paint -->
+        <div class="lp lp-map" hidden>
+          <section class="pcard">
+          <h2>Map — tiles</h2>
+          <div class="tool-row" id="paint-tools">
+            <button data-tool="brush" class="active" title="paint (drag); Shift = line">Brush</button>
+            <button data-tool="fill" title="flood fill">Fill</button>
+            <button data-tool="select" title="drag a rectangle → use as stamp (copy)">Select</button>
+          </div>
+          <div id="stamp-info" class="muted small"></div>
+          <div id="paint-palette" class="palette"></div>
+          <div class="brush">brush: <b id="brush-label">—</b></div>
+          </section>
+
+          <!-- BUILDING BLOCKS: the objects the shipped maps are built out of, cut along their own
+               edges. Offered for THIS area's tileset only — a block cannot be drawn outside it. -->
+          <section class="pcard">
+          <h2>Building blocks <span id="blk-count" class="muted small"></span></h2>
+          <div class="tool-row" id="blk-kinds">
+            <button data-bk="house" class="active">Houses</button>
+            <button data-bk="wall">Walls</button>
+            <button data-bk="decor">Decor</button>
+            <button data-bk="service">Services</button>
+          </div>
+          <div id="blk-list" class="blk-list muted small">load an area…</div>
+          <div id="blk-armed" class="muted small"></div>
+          </section>
+          <section class="pcard">
+          <h2>Blueprints <span class="muted small">a region as a re-usable thing</span></h2>
+          <p class="muted small">A stamp copies <b>tiles</b>. A blueprint copies the whole
+            <b>object</b>: the cells, the records they dispatch, and what those records name —
+            texts, tiles, foes, hireables. <b>Select</b> a region, then snap it.</p>
+          <div class="btns">
+            <button id="bp-snap" disabled title="turn the last selection into a blueprint">⧉ Snap selection</button>
+            <button id="bp-refresh" class="mini" title="reload the library">⟳</button>
+          </div>
+          <div id="bp-cut" hidden></div>
+          <div id="bp-list" class="bp-list"></div>
+          <div id="bp-report" class="muted small"></div>
+          </section>
+
+          <section class="pcard">
+          <h2>Map actions</h2>
+          <div class="btns">
+            <button id="save-btn" disabled>Save map</button>
+            <button id="revert-btn">Revert to baseline</button>
+            <button id="map-history-btn" class="mini" title="save history of this map's tile grid — restore any earlier version, not just baseline">⟲ history</button>
+          </div>
+          <div id="map-history-wrap" hidden>
+            <h2>History <span class="muted small">every save of this map's tile grid · ⟲ = restore that version (current → undo) · ≠ = diff vs now</span></h2>
+            <div id="map-history" class="history"></div>
+          </div>
+          <div id="map-diff-wrap" hidden>
+            <h2>Diff <span id="map-diff-info" class="info"></span>
+              <button id="map-diff-toggle" class="mini">show: old</button>
+              <button id="map-diff-close" class="mini">close</button></h2>
+            <canvas id="map-diff-canvas" class="diff-canvas"></canvas>
+          </div>
+          <p class="muted small">Drag = paint · <b>Shift</b> = line · Fill = bucket · Select = drag a
+            box → stamp (⌫ clears). Edits → <code>editor/work/</code>.</p>
+          </section>
+        </div>
+        <!-- EDIT / Physique: solidity paint (op-nibble) -->
+        <div class="lp lp-physique" hidden>
+          <section class="pcard">
+          <h2>Physique — solidity</h2>
+          <p class="muted small">Paint the <b>op layer</b>: <b>Wall</b> = op-$B, <b>Floor</b> = op-0
+            (keeps script cells), <b>Erase</b> = clear ANY cell (deletes a wall OR a script). A cell
+            is one op. To delete a script, use Erase (or clear it in the Script view).</p>
+          <div class="tool-row" id="phys-tools">
+            <button data-phys="wall" class="active" title="op-$B solid">Wall</button>
+            <button data-phys="floor" title="op-0 walkable (keeps script cells)">Floor</button>
+            <button data-phys="erase" title="clear ANY cell to op-0 — deletes a wall OR a script">Erase</button>
+            <button data-phys="fill" title="flood-fill with the current value">Fill</button>
+          </div>
+          <div id="phys-info" class="muted small"></div>
+          </section>
+          <section class="pcard">
+          <h2>Actions</h2>
+          <div class="btns">
+            <button id="phys-save" disabled>Save physics</button>
+            <button id="phys-revert">Revert to baseline</button>
+          </div>
+          </section>
+        </div>
+      </aside>
+    </main>
+  <div id="script-tip" hidden></div>
+  </section>
+
+  <!-- ═══════════════ TILESETS TAB ═══════════════ -->
+  <section id="tab-tilesets" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <label><span>Tileset</span> <select id="ts-select"></select></label>
+      <button id="new-tileset-btn" class="mini">＋ tileset</button>
+      <button id="ts-copy-btn" class="mini">copy tiles from…</button>
+      <button id="ts-compact-btn" class="mini" title="pack non-empty tiles to the front, empties to the end (remaps maps)">⊟ pack</button>
+      <button id="ts-clear-unused-btn" class="mini" title="blank tiles no area using this set references (undoable), then ⊟ pack">clear unused</button>
+      <button id="ts-undo-btn" class="mini">↶ undo</button>
+      <button id="ts-revert-btn" class="mini">revert to baseline</button>
+      <button id="ts-history-btn" class="mini" title="save history of this tileset — restore any earlier version, not just baseline">⟲ history</button>
+      <label class="layer-toggle"><span>used in</span> <select id="ts-usage-area"><option value="">— all —</option></select></label>
+      <span id="ts-usage-count" class="info"></span>
+      <span id="ts-info" class="info"></span>
+      <span id="ts-dirty" class="dirty" hidden>● modified</span>
+    </div>
+    <main>
+      <div class="ts-left">
+        <div id="ts-usage" class="usage"></div>
+        <h2>Tiles <span class="muted small">click to edit</span></h2>
+        <div id="ts-palette" class="palette big"></div>
+        <div id="ts-sandbox-wrap">
+          <h2>Sandbox
+            <span class="muted small">paint the selected tile — 24×24 scratch, not saved · drag paints · right-click erases</span>
+            <button id="sb-clear" class="mini">clear all</button></h2>
+          <canvas id="ts-sandbox" width="768" height="768" title="drag = paint the selected tile · right-click = erase"></canvas>
+        </div>
+        <div id="ts-history-wrap" hidden>
+          <h2>History <span class="muted small">every save of this tileset · ⟲ = restore that version (current state → undo) · ≠ = diff vs now</span></h2>
+          <div id="ts-history" class="history"></div>
+        </div>
+        <div id="ts-diff-wrap" hidden>
+          <h2>Diff <span id="ts-diff-info" class="info"></span>
+            <button id="ts-diff-toggle" class="mini">show: old</button>
+            <button id="ts-diff-close" class="mini">close</button></h2>
+          <canvas id="ts-diff-canvas" class="diff-canvas"></canvas>
+        </div>
+      </div>
+      <!-- #te-body is the ONE tile editor. It is not copied for the block editor — it is LENT to
+           it and comes back here. #te-home is where it lives when nobody has borrowed it. -->
+      <aside id="ts-editor">
+        <div id="te-empty" class="te-empty">← click a tile in the list to edit it</div>
+        <div id="te-home"></div>
+        <div id="te-body" hidden>
+          <h2>Tile editor <span id="te-id" class="info"></span></h2>
+          <div class="te-main">
+            <canvas id="te-canvas"></canvas>
+            <div class="te-side">
+              <div class="te-vals" id="te-vals"></div>
+              <div class="te-chars" id="te-chars"></div>
+            </div>
+          </div>
+          <div class="tool-row" id="te-tools">
+            <button id="te-copy" title="copy this tile to the clipboard">Copy</button>
+            <button id="te-paste" title="paste the clipboard onto this tile (then Save)">Paste</button>
+            <button id="te-flipx" title="mirror horizontally">Flip ⇄</button>
+            <button id="te-flipy" title="mirror vertically">Flip ⇅</button>
+          </div>
+          <div class="btns">
+            <button id="te-save">Save tile</button>
+            <button id="te-clear">Clear (blank)</button>
+            <button id="te-close">Close</button>
+          </div>
+          <p class="muted small">MCM: 4 colours per 8×8 char. <b>%00</b>=bg ($D021) &amp;
+            <b>%11</b>=colour-RAM are global; <b>%01</b>/<b>%10</b> are per-char. Pixels are 2:1.</p>
+        </div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ GFX TAB (title-overlay graphics) ═══════════════ -->
+  <section id="tab-gfx" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <span class="muted small">title-overlay graphics (globe · WASTELAND logo) — edited in the SAME picture editor as portraits; the build packs the source over the g64 depack</span>
+      <span id="gfx-info" class="info"></span>
+    </div>
+    <main>
+      <div class="pt-left">
+        <h2>Title graphics <span class="muted small">click to view / edit</span></h2>
+        <div id="gfx-list" class="pt-list"></div>
+      </div>
+      <aside id="gfx-side">
+        <div id="gfx-view" class="muted">select a graphic…</div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ ENDINGS TAB (endgame scene frames) ═══════════════ -->
+  <section id="tab-endings" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <span class="muted small">endgame scene frames (Cochise dome · ranger-death skeletons · all-dead finale) — $0586 anim-objects, edited in the SAME picture editor as portraits; the build packs the source over the g64 decode</span>
+      <span id="endings-info" class="info"></span>
+    </div>
+    <main>
+      <div class="pt-left">
+        <h2>Endings <span class="muted small">click to view / edit</span></h2>
+        <div id="endings-list" class="pt-list"></div>
+      </div>
+      <aside id="endings-side">
+        <div id="endings-view" class="muted">select a graphic…</div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ PORTRAITS TAB ═══════════════ -->
+  <section id="tab-portraits" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <button id="new-portrait-btn" class="mini">＋ portrait</button>
+      <label class="small"><input type="checkbox" id="pt-hide-dups" checked> hide duplicate portraits</label>
+      <span id="pt-info" class="info"></span>
+    </div>
+    <main>
+      <div class="pt-left">
+        <h2>Portraits <span class="muted small">click to view / edit</span></h2>
+        <div id="pt-list" class="pt-list"></div>
+      </div>
+      <aside id="pt-side">
+        <div id="npc-view"></div>
+        <div id="portrait-editor" hidden>
+          <div class="pe-head">
+            <h2><span id="pe-editor-title">Portrait editor</span> <span id="pe-id" class="info"></span></h2>
+            <div id="pe-pal" class="pe-pal"></div>
+            <label class="small" id="pe-show-changes-label"><input type="checkbox" id="pe-show-changes"> show changes</label>
+            <canvas id="pe-preview" title="live preview"></canvas>
+            <button id="pe-anim-play" class="mini">▶ preview</button>
+            <button id="pe-import" class="mini" title="load a PNG into the frame you are editing (drop one straight onto a frame to pick it)">⇪ PNG</button>
+            <button id="pe-save-all" class="mini">Save</button>
+            <button id="pe-close" class="mini">Close</button>
+          </div>
+          <p id="pe-import-msg" class="small" hidden></p>
+          <input type="file" id="pe-file" accept="image/png,image/*" hidden>
+          <div id="pe-frames"></div>
+          <p class="muted small" id="pe-anim-hint">Up to 4 ANIMATIONS run concurrently (blink / mouth
+            / glint). Each is a looping sequence of full states: paint every frame as WHAT IT SHOWS,
+            set how long it stays (delay, game walks). A frame left = base is a pause; the loop
+            returns to the base automatically. The EOR masks are computed from your frames at save.
+            44×84 MC-pixels, FIXED 4 colours (black / red / blue / white).<br>
+            <b>Drop a PNG onto a FRAME</b> to load it into that one — that is how you upload a
+            whole animation, frame by frame. Dropped elsewhere (or via ⇪ PNG) it goes into the frame
+            you are currently editing; the highlighted card shows where it will land. Replacing the
+            base re-bases the tracks: pixels that were not animating follow the new picture, the
+            animated ones keep their state. It lands in the editor first, so nothing is written until
+            you press Save. A portrait stores no colour of its own, so the image may use at most
+            those four colours; more is refused, and near matches are snapped and reported.</p>
+        </div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ FLOW TAB (script chains as events) ═══════════════ -->
+  <!-- FLOW belongs to ONE area, so it lives under Areas as a third view, not under World. -->
+  <!-- Events: the chain list, the chain AS A FLOWCHART, and one fixed inspector. The outline it
+       replaces was right about one thing — indentation only where something forks — and wrong about
+       where the editor goes: opening a form INSIDE the list pushes everything below it down, so the
+       thing you are editing and the thing it hands over to can never be on screen together. -->
+  <section id="tab-flow" class="tab">
+    <main class="evw">
+      <aside id="flow-list"></aside>
+      <div id="flow-detail" class="flow-detail"><div class="muted">pick an event</div></div>
+      <aside id="ev-insp" class="ev-insp"><div class="muted">click a beat to edit it</div></aside>
+    </main>
+  </section>
+
+
+  <!-- ═══════════════ DESIGN TAB — top-down quest authoring ═══════════════ -->
+  <!-- Every other view here reads UP from the bytes, because that is the direction reverse
+       engineering runs in. This one runs DOWN: a quest, then shapes, then who and what, then a
+       square — and records only exist at the very end. -->
+  <section id="tab-design" class="tab">
+    <div class="controls">
+      <!-- No quest picker. The list in the left column IS the picker — it says the same thing
+           with the stage, the step count and the areas beside it, and two controls for one choice
+           is how they drift apart (Alex, 2026-08-07). -->
+      <button id="dq-new" class="mini">＋ quest</button>
+      <button id="dq-del" class="mini" title="remove this quest and its plan — records already written into the game stay">🗑 delete quest</button>
+      <span id="dq-where" class="muted small"></span>
+      <span id="dq-budget" class="muted small"></span>
+    </div>
+    <main class="dq-main">
+      <!-- LEFT: which quest, and what the quest IS. The state axis is the backbone of a quest, not
+           a property at its edge — the beats fall out of it, so it stands in the main column with
+           its log lines beside it (concept §4). Markers sit under it: the item or word the quest
+           points at by name. -->
+      <aside id="dq-left" class="dq-left">
+        <div id="dq-quests" class="dq-quests"><div class="muted">…</div></div>
+        <div id="dq-axis" class="dq-axis"></div>
+        <div id="dq-markers" class="dq-marks"></div>
+      </aside>
+      <!-- MIDDLE: the beats in order, and under them what the battery says about them. The checks
+           belong next to the list they are about, not in a dialog you have to ask for. -->
+      <aside id="dq-mid" class="dq-mid">
+        <div id="dq-steps" class="dq-steps"><div class="muted">pick a quest…</div></div>
+        <div id="dq-checks" class="dq-checks"></div>
+      </aside>
+      <div id="dq-work" class="dq-work"><div class="muted">pick or add a step</div></div>
+    </main>
+  </section>
+
+  <!-- ═══════════════ OVERVIEW TAB (teleport tree) ═══════════════ -->
+  <section id="tab-overview" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <b>Teleport tree</b>
+      <span class="muted small">overworld → areas → subareas · click a row to open it · coords prefill from the incoming transition</span>
+      <button id="ov-refresh" class="mini">↻ refresh</button>
+      <span id="ov-info" class="info"></span>
+    </div>
+    <main>
+      <div id="ov-tree" class="ov-tree muted">loading…</div>
+      <aside id="ov-legend" class="ov-legend">
+        <h2>Legend</h2>
+        <ul>
+          <li><span class="ov-flag on">T</span> teleport enabled</li>
+          <li><span class="ov-flag off">T</span> teleport disabled</li>
+          <li><span class="ov-flag warn">⚠</span> multi-entry — pick the canonical arrival</li>
+          <li><span class="ov-flag rel">⟳</span> party-relative only — coord computed from delta, verify</li>
+          <li><span class="ov-flag man">⚙</span> hand-authored grp16/keyword edge (area_names.json _manual_edges)</li>
+          <li><span class="ov-flag cond">⌁</span> conditional / subtable transition only (no plain door)</li>
+          <li><span class="ov-flag none">○</span> no incoming transition at all</li>
+          <li><span class="ov-flag rev">●</span> review — name/coord not yet confirmed</li>
+          <li><span class="muted">→ area N</span> back-link (shown, not expanded)</li>
+        </ul>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ COPY-TILES OVERLAY ═══════════════ -->
+  <div id="copy-overlay" class="overlay" hidden>
+    <div class="overlay-box">
+      <div class="overlay-head">
+        <b>Copy tiles</b>
+        <span class="muted small">click = one · ⌘/Ctrl = toggle · Shift = range</span>
+        <span class="spacer"></span>
+        <button id="copy-do" class="mini">copy <span id="copy-count">0</span> → slot <span id="copy-dst">0</span></button>
+        <button id="copy-cancel" class="mini">cancel</button>
+      </div>
+      <div class="copy-cols">
+        <div class="copy-col">
+          <div class="copy-h">FROM <select id="copy-src-select"></select></div>
+          <div id="copy-grid" class="palette"></div>
+        </div>
+        <div class="copy-col">
+          <div class="copy-h">INTO <b id="copy-dst-name"></b> — click a start slot</div>
+          <div id="copy-dst-grid" class="palette"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ BAUKASTEN · BLOCKS — the catalogue of places ═══════════════ -->
+  <!-- What exists, drawn from each block's OWN tiles. Looking at the catalogue comes before letting
+       it near a map, which is why this pane still places nothing on its own: it hands a block over
+       to Patterns, and ONE call (/api/design/place) then sets the block and fills its hole. -->
+  <section id="tab-blocks" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <div class="mode-switch" id="bl-kinds">
+        <button data-bk="house" class="active">Houses</button>
+        <button data-bk="wall">Walls</button>
+        <button data-bk="decor">Decor</button>
+        <button data-bk="service">Services</button>
+      </div>
+      <span class="muted small">objects cut out of the shipped maps along their own edges — each
+        carries the tiles it is made of, so none of this depends on a tileset</span>
+      <span id="bl-info" class="info"></span>
+    </div>
+    <main class="blw">
+      <div id="bl-grid" class="bl-grid"><div class="muted">…</div></div>
+      <aside id="bl-side" class="bl-side"><div class="muted">pick a block</div></aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ BAUKASTEN · PATTERNS — the catalogue of scenes ═══════════════ -->
+  <!-- The shapes the game repeats, and the mask that fills one in. No quest is opened here and none
+       is needed: most of the shipped game is pattern WITHOUT an arc (a-sign 92×, guarded-stash 95×),
+       so a beat placed from here becomes records and nothing else — the world is its own store. -->
+  <section id="tab-patterns" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <span class="muted small">pick a shape, say who and what, put it on a square — that is the
+        whole of it. A quest is a separate, optional layer on top.</span>
+      <span id="kit-carry" class="info"></span>
+      <span id="kit-info" class="info"></span>
+    </div>
+    <main class="kitw">
+      <aside id="kit-list" class="kit-list"><div class="muted">loading…</div></aside>
+      <div id="kit-work" class="kit-work"><div class="muted">pick a pattern</div></div>
+    </main>
+  </section>
+
+  <!-- ═══════════════ DESIGN · QUESTS — the cross-area graph ═══════════════ -->
+  <section id="tab-quests" class="tab">
+    <div class="controls">
+      <span class="muted small">what one place needs that another place gives — derived from the
+        records (a global item id, a keyword's word), named by hand.</span>
+      <button id="q-refresh" class="mini">↻</button>
+      <!-- Two ways to read a quest. Links is what it NEEDS and GIVES (items, keywords, sources).
+           Journey is what the player DOES, in order, grouped into the runs that happen in one
+           place — the same area comes back as a new section, because going back IS a step. -->
+      <div class="mode-switch" id="q-shape">
+        <button data-qshape="links" title="what this quest needs and gives — items, keywords, where they come from">Links</button>
+        <button data-qshape="journey" class="active" title="the quest top down, in sections — one per run of steps in the same place">Journey</button>
+      </div>
+      <span id="q-info" class="info"></span>
+    </div>
+    <main class="qw">
+      <aside class="qw-list"><div id="q-list" class="muted">loading…</div></aside>
+      <div class="qw-detail">
+        <div id="q-detail" class="muted">pick a quest</div>
+      </div>
+      <aside id="q-insp" class="ev-insp" hidden><div class="muted">click a step to edit it</div></aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ PARTY (World) — the rangers a new game starts with ═══════════════ -->
+  <section id="tab-party" class="tab">
+    <div class="controls">
+      <div class="mode-switch sub-switch" data-group="world">
+        <button data-pane="tilesets">Tilesets</button>
+        <button data-pane="portraits">Portraits</button>
+        <button data-pane="teleport">Teleport</button>
+        <button data-pane="gfx">Title</button>
+        <button data-pane="endings">Endings</button>
+      </div>
+      <label><span>Blob</span> <select id="pa-select"></select></label>
+      <button id="pa-undo" class="mini">↶ undo</button>
+      <button id="pa-revert" class="mini" title="drop the working copy, back to baseline">revert</button>
+      <span id="pa-info" class="info"></span>
+    </div>
+    <main class="paw">
+      <div id="pa-list" class="muted">loading…</div>
+      <aside class="paw-side">
+        <h2>What this is</h2>
+        <p class="muted small">The party a NEW GAME starts with: 8 records of 256 bytes, the
+          $F400–$FBFF window. Record 0 is the header, 1–4 are the rangers, 5–7 spare. The cart
+          picks a blob at build time (<code>WL_PARTY</code>); edits go to
+          <code>editor/work/save/</code> and <code>baseline/save/</code> stays pristine.</p>
+        <p class="muted small">Only the fields you change are written — the rest of each 256-byte
+          record stays byte-identical, including the parts nobody has identified yet.</p>
+        <div id="pa-problems"></div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- ═══════════════ BLUEPRINTS TAB — the workbench ═══════════════ -->
+  <section id="tab-blueprints" class="tab">
+    <div class="controls">
+      <b>Blueprints</b>
+      <span class="muted small">the three kinds of re-usable thing: <b>patterns</b> (shapes the game
+        repeats), <b>services</b> (shop, doctor, library, talker) and <b>buildings</b> (a map region
+        with its cells, scripts, texts, tiles and foes). Always copied into the quest that uses one.</span>
+      <button id="bpw-refresh" class="mini">↻</button>
+      <span id="bpw-info" class="info"></span>
+    </div>
+    <main class="bpw">
+      <aside class="bpw-lib">
+        <h2>Library <span class="muted small">patterns · services · buildings</span></h2>
+        <div id="bpw-list" class="bp-list muted">loading…</div>
+      </aside>
+      <div class="bpw-mid">
+        <h2 id="bpw-title">—
+          <span class="muted small" id="bpw-sub"></span></h2>
+        <div class="tool-row" id="bpw-tools">
+          <button data-bt="paint" class="active" title="paint the selected tile onto a cell">Paint</button>
+          <button data-bt="erase" title="remove a cell from the blueprint">Erase</button>
+        </div>
+        <canvas id="bpw-canvas" width="640" height="640"
+                title="drag = paint the selected tile · a marked cell carries a script"></canvas>
+        <div id="bpw-cellinfo" class="muted small"></div>
+        <div class="btns">
+          <button id="bpw-save" disabled>Save blueprint</button>
+          <button id="bpw-undo" class="mini" disabled title="step back one paint or erase">↶ undo</button>
+          <button id="bpw-revert" class="mini" disabled title="throw away unsaved changes and reload from disk">revert</button>
+          <button id="bpw-place" class="mini" title="place it into the area open on the Map tab">place into current area…</button>
+          <button id="bpw-delete" class="mini">delete</button>
+        </div>
+        <div id="bpw-report" class="muted small"></div>
+      </div>
+      <aside class="bpw-side">
+        <h2>Tiles <span class="muted small">the blueprint's own — click to pick a brush</span></h2>
+        <div id="bpw-palette" class="palette"></div>
+        <h2>Contents</h2>
+        <div id="bpw-contents" class="muted small"></div>
+        <h2>Notes</h2>
+        <textarea id="bpw-notes" rows="7" placeholder="what this block is for, what it assumes, what to wire up after placing it…"></textarea>
+      </aside>
+    </main>
+  </section>
+
+
+  <script src="main.js?v=__WL_VERSION__"></script>
+</body>
+</html>

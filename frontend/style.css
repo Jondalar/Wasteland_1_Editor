@@ -1,0 +1,1264 @@
+:root {
+  --bg: #14161c; --panel: #1d212b; --ink: #e6e8ee; --muted: #8b93a7;
+  --accent: #d8a24e; --line: #2b3140;
+  /* TWO families, because this editor is now half prose. Monospace earns its place on things that
+     line up or that you read a character at a time — hex, coordinates, ids, disassembly. On a
+     sentence it costs about 15% of the line and all of the rhythm, and the quest notes, beat labels
+     and in-game texts are sentences. */
+  --ui: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.5 var(--ui); background: var(--bg); color: var(--ink); }
+/* Things that ARE values keep the typewriter. */
+code, pre, textarea, .mono, .dbg, .beat-cell, .hist-rev, .hex, .scene-listing, .code-pre,
+h2 { font-size: 12px; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+/* A heading is a NOUN. The explanation that used to be shouted alongside it in caps lives here, in
+   normal case, one line down — six of the eleven headings in the area panel were full sentences. */
+h2 .muted, h2 .small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.h2-sub { color: var(--muted); font-size: 11.5px; margin: -4px 0 8px; line-height: 1.4; }
+h2:not(:first-child) { margin-top: 18px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.info { color: var(--accent); }
+/* machine controls: one group, so the eye reads them as belonging to the C64 and not to the build */
+#mach-state.warp { color: #e6a24e; }        /* warp is not an error, but it must not read as normal */
+/* tabular + reserved width: the bar must not shuffle sideways as the cursor crosses from 9 to 10 */
+.coord { font-variant-numeric: tabular-nums; min-width: 72px; display: inline-block; text-align: right; }
+.dirty { color: #e6635a; font-size: 12px; }
+code { color: var(--accent); }
+
+header { display: flex; align-items: center; gap: 18px; padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { margin: 0; font-size: 17px; letter-spacing: .5px; }
+header h1 .ver { color: var(--accent); font-size: 12px; }
+/* Shown only for a non-C64 data root — an Apple II root reads but never writes. */
+.machine-badge { font-size: 11px; padding: 4px 9px; border-radius: 6px; white-space: nowrap;
+                 color: #e6c15a; border: 1px solid #5a4a1e; background: #262014; }
+.git-badge { margin-left: auto; font-size: 11px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
+.git-badge.ok { color: #7fc98a; border-color: #2e5a34; background: #14261a; }
+.git-badge.warn { color: #e6c15a; border-color: #5a4a1e; background: #262014; }
+.git-badge:hover { border-color: var(--accent); }
+.tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.tabs button { background: var(--bg); color: var(--muted); border: 0; padding: 6px 16px; font: inherit; cursor: pointer; }
+.tabs button.active { background: var(--accent); color: #191919; font-weight: bold; }
+
+.tab { display: none; }
+.tab.active { display: block; }
+.controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+/* Selects are flex items in every label row. Two WebKit traps live here, so neither is relied on:
+   a NATIVE control (appearance:auto) can compute an intrinsic min-width of 0 and collapse inside a
+   flex container, and a bare text node beside it is an anonymous flex item that shrinks differently
+   than in Blink (hence the <span>s in the markup). appearance:none + an explicit min-width takes
+   both out of the picture; the arrow is drawn by us since we dropped the native one. */
+select {
+  -webkit-appearance: none; appearance: none;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  padding: 4px 26px 4px 8px; border-radius: 6px; font: inherit;
+  min-width: 9ch; flex: 0 1 auto;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0h10L5 6z' fill='%238b93a7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center;
+}
+label > span { flex: 0 0 auto; }
+main { display: flex; gap: 18px; padding: 18px; align-items: flex-start; flex-wrap: nowrap; }
+/* RULE: an inspector scrolls INSIDE ITSELF. A side panel that grows the document makes the map
+   scroll away under you while you read a record — the thing you were comparing it against is the
+   first casualty. Every panel gets its own viewport-bounded box and its own scrollbar. */
+/* 60 header + 58 control row + 2x18 main padding = 154; the 6 extra keep a wrapped control
+   row from pushing the document past the viewport and reintroducing a page scrollbar. */
+main > aside, #cell-panel, #map-pane { max-height: calc(100vh - 160px); overflow-y: auto; }
+main > aside { overscroll-behavior: contain; }
+/* Tilesets and Teleport put their content straight into main with no <aside> to bound, so they
+   were the last two views still growing the document. Same rule, applied to the column itself. */
+#tab-tilesets > main > *, #tab-overview > main > * { max-height: calc(100vh - 160px); overflow-y: auto; }
+@media (max-width: 1100px) { main { flex-wrap: wrap; } }   /* only stack on a really narrow window */
+
+.mini { background: var(--bg); color: var(--ink); border: 1px solid var(--line); padding: 3px 10px; border-radius: 5px; font: inherit; font-size: 12px; cursor: pointer; }
+.mini:hover { border-color: var(--accent); }
+.mode-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.mode-switch button { background: var(--bg); color: var(--muted); border: 0; padding: 5px 12px; font: inherit; cursor: pointer; }
+.mode-switch button.active { background: var(--accent); color: #191919; font-weight: bold; }
+.zoom-ctl { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.zoom-ctl button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); width: 24px; height: 24px; border-radius: 5px; font: inherit; cursor: pointer; }
+#zoom-val { min-width: 22px; text-align: center; color: var(--accent); }
+.btns { display: flex; gap: 8px; }
+.btns button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; border-radius: 6px; font: inherit; cursor: pointer; }
+.btns button:disabled { opacity: .4; cursor: default; }
+.btns button:hover:not(:disabled) { border-color: var(--accent); }
+
+/* map */
+/* map-pane = the shrinkable middle column, so AREA(320) + map + CELL(320) fit one row on a laptop */
+#map-pane { flex: 1 1 0; min-width: 0; max-height: 84vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #000; }
+#map { display: block; image-rendering: pixelated; cursor: crosshair; }
+aside { width: 320px; flex: 0 0 320px; align-self: stretch; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+#cell-panel { width: 480px; flex: 0 0 480px; }   /* Cell column ×1.5 (Alex): more room for the script/chain editor */
+/* …but not while it is empty. The map was being cut off at the bottom to keep 480px reserved
+   for the sentence "click a cell to inspect". */
+/* The collapse belongs to the CELL pane, not to the column. `.empty` alone squeezed the Tiles and
+   Walls panes — full of palette, blueprints and buttons — down to 200px whenever no cell happened
+   to be selected, which is most of the time while painting. */
+#cell-panel.cell-mode.empty { width: 200px; flex: 0 0 200px; }
+#legend { list-style: none; margin: 0; padding: 0; }
+#legend li { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+#legend .sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #0006; }
+
+/* palettes */
+.palette { display: flex; flex-wrap: wrap; gap: 4px; max-height: 420px; overflow-y: auto; }
+.palette.big { max-height: 78vh; }
+.palette .tile { width: 40px; height: 40px; border: 2px solid transparent; border-radius: 4px; cursor: pointer; image-rendering: pixelated; background: #000; }
+#paint-palette .tile { width: 32px; height: 32px; }
+.palette .tile.used { border-color: #3a4152; }
+.palette .tile.sel { border-color: #fff; }
+.brush { margin: 10px 0; color: var(--muted); } .brush b { color: var(--accent); }
+.tool-row { display: flex; gap: 4px; margin-bottom: 8px; }
+.tool-row button { flex: 1; background: var(--bg); color: var(--muted); border: 1px solid var(--line); padding: 5px 0; border-radius: 5px; font: inherit; font-size: 12px; cursor: pointer; }
+.tool-row button.active { background: var(--accent); color: #191919; font-weight: bold; }
+#stamp-info { margin-bottom: 8px; color: var(--accent); }
+#paint-coord { color: var(--accent); }
+
+/* tilesets tab */
+.usage { margin: 4px 0 12px; font-size: 12px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; line-height: 1.5; }
+.usage b { color: var(--accent); }
+.usage-link { color: var(--ink); text-decoration: underline dotted var(--muted); cursor: pointer; }
+.usage-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
+.ts-left { flex: 1 1 auto; min-width: 320px; }
+#ts-palette { max-height: 60vh; }
+
+/* tileset sandbox — 24×24 scratch grid, 32px tiles, client-only (never saved) */
+#ts-sandbox-wrap { margin-top: 18px; }
+#ts-sandbox-wrap h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#ts-sandbox { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px;
+  cursor: crosshair; width: 100%; max-width: 768px; aspect-ratio: 1; height: auto; background: #000;
+  touch-action: none; display: block; }
+
+/* off-map fill tile preview */
+.fill-prev { image-rendering: pixelated; vertical-align: middle; width: 24px; height: 24px;
+  border: 1px solid var(--line); border-radius: 3px; background: #000; }
+
+/* history: per-tileset save list + restore-to-any-version */
+#ts-history-wrap { margin-top: 18px; }
+#ts-history-wrap h2 { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.history { max-width: 768px; max-height: 40vh; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--bg); padding: 4px; font-size: 12px; }
+.hist-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 4px; }
+.hist-row:hover { background: var(--panel); }
+.hist-restore { padding: 1px 7px; line-height: 1.4; }
+.hist-when { color: var(--muted); white-space: nowrap; min-width: 92px; }
+.hist-lbl { color: var(--ink); flex: 1 1 auto; }
+.hist-rev { color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px; }
+.hist-diff { padding: 1px 7px; line-height: 1.4; }
+
+/* visual diff: old-vs-now canvas (tileset grid / map grid), changed cells outlined */
+#ts-diff-wrap, #map-diff-wrap { margin-top: 18px; }
+#ts-diff-wrap h2, #map-diff-wrap h2 { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.diff-canvas { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px;
+  background: #000; max-width: 100%; height: auto; display: block; }
+#rec-history-wrap { margin: 4px 0 10px; }
+#rec-history-wrap .history { max-height: 30vh; }
+
+/* tile editor (MC pixels 2:1) — always present + sticky so the view never jumps */
+#ts-editor { width: 420px; flex: 0 0 420px; position: sticky; top: 8px; align-self: flex-start;
+  max-height: calc(100vh - 16px); overflow-y: auto; }
+.te-empty { color: var(--muted); font-size: 13px; padding: 40px 8px; text-align: center;
+  border: 1px dashed var(--line); border-radius: 8px; }
+.te-main { display: flex; gap: 12px; }
+#te-canvas { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; cursor: crosshair; width: 220px; height: 176px; }
+.te-side { flex: 1; }
+.te-h { font-size: 10px; text-transform: uppercase; color: var(--muted); margin: 6px 0 3px; }
+.te-val { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 0; cursor: pointer; }
+.te-val.sel { color: var(--accent); }
+.te-char { display: flex; align-items: center; gap: 4px; margin: 2px 0; font-size: 12px; }
+.te-char span { width: 20px; color: var(--muted); }
+.te-col { width: 44px; border: 1px solid var(--line); border-radius: 4px; color: #000; font: inherit; font-size: 11px; font-weight: bold; }
+
+/* portraits tab */
+.pt-left { flex: 0 0 350px; min-width: 280px; }
+.pt-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 82vh; overflow-y: auto; }
+.pt-thumb { width: 64px; cursor: pointer; text-align: center; }
+.pt-thumb img { width: 64px; height: 61px; object-fit: cover; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; }
+.pt-thumb span { display: block; font-size: 9px; color: var(--muted); }
+.pt-thumb:hover img { border-color: var(--accent); }
+.pt-thumb.missing img { opacity: .3; }
+#pt-side { flex: 1 1 auto; display: flex; gap: 16px; align-items: flex-start; min-width: 0; }
+#npc-view { flex: 0 0 280px; }
+.insp-portrait { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; }
+.insp-portrait.big { width: 100%; max-width: 300px; }
+
+/* portrait FRAME editor (one canvas per animation frame) */
+#portrait-editor { flex: 1 1 auto; min-width: 0; }
+.pe-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.pe-head h2 { margin: 0; }
+#pe-preview { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; width: 66px; }
+#pe-frames { display: flex; flex-direction: column; gap: 14px; }
+.pe-track { display: flex; gap: 12px; align-items: flex-start; border-top: 1px solid var(--line); padding-top: 10px; }
+.pe-track:first-child { border-top: 0; padding-top: 0; }
+.pe-track-label { flex: 0 0 110px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.pe-strip { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.pe-frame-head { font-size: 12px; color: var(--muted); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.pe-frame canvas.pe-fc { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; width: 176px; display: block; }
+/* the ACTIVE (edited) frame: ~270% + pixel grid (drawn on the canvas) */
+.pe-frame.active canvas.pe-fc { width: 480px; cursor: crosshair; border-color: var(--accent); }
+/* the frame a dragged PNG would land in — the drop is per-FRAME, so it has to be visible which */
+/* the mandatory return-to-base state that ends every animation loop */
+.pe-frame.closing canvas.pe-fc { border-style: dashed; opacity: .8; }
+.pe-frame.drop canvas.pe-fc { border-color: var(--ok, #6cc06c); border-style: dashed; border-width: 2px; }
+.pe-frame-add { width: 64px; height: 168px; background: none; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); cursor: pointer; font: inherit; align-self: flex-end; }
+.pe-frame-add:hover { border-color: var(--accent); color: var(--accent); }
+.pe-track-add { align-self: flex-start; }
+.pe-side { flex: 1; }
+.pe-pal { display: flex; gap: 6px; }
+.pe-sw { width: 32px; height: 32px; border-radius: 5px; border: 2px solid var(--line); cursor: pointer; }
+.pe-sw.sel { border-color: #fff; }
+
+.pe-delay { width: 48px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font: inherit; }
+
+/* npc/foe thumbs */
+.npc-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.npc-thumb { width: 56px; cursor: pointer; text-align: center; }
+.npc-thumb img { width: 56px; height: 53px; object-fit: cover; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; }
+.npc-thumb span { display: block; font-size: 9px; color: var(--muted); line-height: 1.2; margin-top: 2px; word-break: break-word; }
+.npc-thumb:hover img { border-color: var(--accent); }
+.npc-thumb.missing img { opacity: .3; }
+/* service-portrait tile: the tile itself opens the Services tab, the ↗ badge the portrait */
+.npc-thumb { position: relative; }
+.svc-jump { position: absolute; top: 2px; right: 2px; padding: 0 3px; line-height: 1.1;
+            font-size: 9px; opacity: 0; transition: opacity .12s; }
+.npc-thumb:hover .svc-jump { opacity: 1; }
+/* flash the card a jump landed on, so it is obvious WHICH one was meant */
+.svc.svc-hit { outline: 2px solid var(--accent); transition: outline-color 1s; }
+
+/* scripted-change list */
+.mut-list { max-height: 78vh; overflow-y: auto; }   /* fills the AREA/Script column; was 240px (old sidebar corner) */
+
+/* AREA Text + Code tabs */
+.txt-list { max-height: 62vh; overflow-y: auto; }
+.txt-row { margin-bottom: 8px; }
+.txt-head { font-size: 11px; margin-bottom: 2px; }
+.txt-use { color: var(--accent); cursor: pointer; margin-right: 4px; }
+.txt-reserved { color: #e6c15a; font-size: 10px; }
+.txt-row-reserved .txt-ta { opacity: .55; }
+.ef-warn { color: #e6c15a; font-size: 11px; margin-top: 4px; }
+.rec-over { color: #e6635a; font-weight: bold; }
+.txt-ta { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 12px; resize: vertical; box-sizing: border-box; }
+.code-ev { margin: 10px 0; }
+.code-pre { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font-size: 11px; line-height: 1.5; overflow-x: auto; margin: 4px 0; }
+.code-pre .cmt { color: #6a9955; }
+.mut { padding: 6px 8px; margin: 4px 0; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: var(--bg); line-height: 1.45; }
+.mut:hover { border-color: var(--accent); }
+.mut.sel { border-color: #5ae0d0; }
+.mut b { color: var(--ink); }
+.mut-tag { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); }
+
+/* script edit */
+.ef-box { margin-top: 10px; }
+.ef-tbl { width: 100%; border-collapse: collapse; }
+.ef-tbl td { padding: 2px 4px 2px 0; vertical-align: middle; }
+.ef-tbl td:first-child { color: var(--muted); white-space: nowrap; }
+.ef-tbl input, .ef-tbl select { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font: inherit; font-size: 12px; }
+.ef-hint { font-size: 11px; color: var(--accent); }
+/* The foe form lives in a ~340px column, so it must never be the thing that makes the inspector
+   scroll sideways: the label column is fixed, the value column takes the rest, and a combat number
+   is 1-5 digits rather than a sentence — the table's blanket width:100% gave each a full-width box
+   and pushed the panel past its edge. Kind and portrait show their PICTURE beside the control, so
+   neither "$02" nor "75" has to be looked up. */
+#foe-edit .ef-tbl { table-layout: fixed; }
+#foe-edit .ef-tbl td:first-child { width: 66px; line-height: 1.25; }
+/* The panel has to fit WITHOUT scrolling the inspector, so only the numbers the engine derives
+   from a field stay on screen — con's HP span, the damage range, the group size. Everything that
+   merely explains a field is the label's title. */
+#foe-edit .ef-hint { display: block; margin-top: 2px; }
+#foe-edit #fe-hp { display: inline; margin-left: 8px; }
+.fe-fig { display: flex; gap: 8px; align-items: center; }
+.fe-fig select { flex: 1; min-width: 0; }
+.fe-fig canvas, .fe-fig img { width: 34px; height: 34px; flex: none; image-rendering: pixelated;
+                              border: 1px solid var(--line); border-radius: 4px; background: #000; }
+.ef-tbl input.fe-num { width: 72px; }
+.fe-fig input.fe-num { flex: none; }
+.fe-pair { display: flex; gap: 10px; }
+/* the name/plural pair: two equal text fields, neither allowed to push the panel wider */
+.fe-pair > input[type="text"], .fe-pair > input:not([type]) { flex: 1; min-width: 0; }
+.fe-pair label { display: inline-flex; gap: 5px; align-items: center; font-size: 11px; color: var(--muted); }
+.ef-prose { width: 100%; margin-top: 3px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 12px; resize: vertical; line-height: 1.35; }
+.ef-prose:focus { border-color: var(--accent); outline: none; }
+
+/* cell inspector */
+#cell-inspect { margin-top: 10px; }
+.insp-head { color: var(--accent); font-weight: bold; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+.insp-sec { border-top: 1px solid var(--line); padding: 8px 0; }
+.insp-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+.insp-kv { width: 100%; border-collapse: collapse; }
+.insp-kv td { padding: 1px 0; vertical-align: top; }
+.insp-kv td:first-child { color: var(--muted); padding-right: 8px; white-space: nowrap; }
+.insp-text { white-space: pre-wrap; }
+.insp-list { margin: 0; padding-left: 18px; }
+.insp-hex { font-size: 11px; color: var(--muted); word-break: break-all; }
+
+/* copy overlay */
+.overlay { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 50; }
+.overlay[hidden] { display: none; }
+.overlay-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(92vw, 900px); max-height: 88vh; display: flex; flex-direction: column; gap: 12px; }
+.overlay-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.overlay-head .spacer { flex: 1; }
+.copy-cols { display: flex; gap: 16px; overflow: hidden; }
+.copy-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.copy-h { font-size: 12px; color: var(--muted); }
+.copy-h b { color: var(--accent); }
+.copy-col .palette { max-height: 66vh; overflow-y: auto; }
+#copy-dst { color: var(--accent); }
+
+/* ── teleport panel (map sidebar) ── */
+.tp-panel { line-height: 1.6; }
+.tp-panel .tp-allow { color: var(--ink); font-weight: bold; margin-bottom: 4px; }
+.tp-row { display: flex; gap: 6px; align-items: center; color: var(--muted); margin: 3px 0; }
+.tp-row input { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 12px; }
+.tp-row input#tp-name { flex: 1; }
+.tp-coord { width: 58px; }
+.tp-flags { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0; }
+.tp-cands { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+.tp-chip { background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 2px 8px; font: inherit; font-size: 11px; cursor: pointer; }
+.tp-chip:hover { border-color: var(--accent); }
+.tp-chip.sel { border-color: #5ae0d0; color: var(--ink); }
+
+/* ── overview / teleport tree ── */
+.ov-tree { flex: 1; min-width: 0; font-size: 13px; }
+.ov-row { display: flex; gap: 8px; align-items: center; padding: 2px 0 2px calc(var(--d) * 20px); border-bottom: 1px solid #ffffff08; }
+.ov-row.ref { opacity: .6; }
+.ov-name { cursor: pointer; color: var(--ink); }
+.ov-row.ref .ov-name { cursor: default; }
+.ov-name:not(.ref .ov-name):hover { color: var(--accent); }
+.ov-co { color: var(--muted); font-size: 12px; }
+.ov-via { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.ov-sec { margin: 14px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); border-top: 1px solid var(--line); padding-top: 8px; }
+.ov-legend { width: 240px; }
+.ov-legend ul { list-style: none; padding: 0; margin: 0; }
+.ov-legend li { display: flex; gap: 8px; align-items: center; margin: 6px 0; color: var(--muted); font-size: 12px; }
+.ov-flag { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+.ov-flag.on { background: #7bd88f22; color: #7bd88f; border: 1px solid #7bd88f66; }
+.ov-flag.off { background: #ffffff08; color: var(--muted); border: 1px solid var(--line); }
+.ov-flag.warn { background: #e6a24e22; color: var(--accent); border: 1px solid #e6a24e66; }
+.ov-flag.none { background: #ffffff08; color: var(--muted); border: 1px solid var(--line); }
+.ov-flag.rev { background: #e6635a22; color: #e6635a; border: 1px solid #e6635a66; }
+
+/* party-relative (computed) teleport markers */
+.ov-flag.rel { background: #5aa9e622; color: #5aa9e6; border: 1px solid #5aa9e666; }
+.tp-chip.rel { border-style: dashed; }
+.tp-relmark { color: #5aa9e6; }
+
+/* conditional / subtable-only teleport markers */
+.ov-flag.cond { background: #b98ce622; color: #b98ce6; border: 1px solid #b98ce666; }
+.tp-chip.cond { border-style: dashed; }
+.tp-condmark { color: #b98ce6; }
+
+/* hand-authored manual / grp16 teleport edges */
+.ov-flag.man { background: #7bd88f22; color: #7bd88f; border: 1px solid #7bd88f66; }
+.tp-chip.man { border-color: #7bd88f88; }
+.tp-manmark { color: #7bd88f; }
+
+/* EDIT subset switch + morphing left layer-inspector */
+.subset-switch { margin-left: -6px; }
+.lp[hidden] { display: none; }
+.lp { margin-bottom: 4px; }
+/* Cell panel = one flow: header, then the op EDITOR (add-op/chain), then field edits, then the
+   read-only decode last (collapsed). CSS order does it without moving the DOM. */
+.lp-cell { display: flex; flex-direction: column; }
+.lp-cell h2 { order: 0; }
+.lp-cell #cell-detail { order: 1; }
+.lp-cell #cell-addop { order: 2; }
+.lp-cell #cell-edit { order: 3; }
+.lp-cell #cell-inspect { order: 4; }
+.insp-details > summary { cursor: pointer; padding: 4px 0; list-style: revert; }
+.insp-details[open] > summary { color: var(--accent); }
+/* VIEW mode = identical to Edit but read-only: grey out every field, hide every action button
+   (Save/Reset/Clear, Add op, move op, add link, ↑/↓/✕, loop). One class, survives re-renders. */
+#cell-panel.ro-view #cell-addop input, #cell-panel.ro-view #cell-addop select,
+#cell-panel.ro-view #cell-addop textarea, #cell-panel.ro-view .ef-box input,
+#cell-panel.ro-view .ef-box select, #cell-panel.ro-view .ef-box textarea {
+  pointer-events: none; opacity: 0.55;
+}
+#cell-panel.ro-view #cell-addop .btns, #cell-panel.ro-view #cell-addop #ao-chain-add,
+#cell-panel.ro-view #cell-addop .ao-link-up, #cell-panel.ro-view #cell-addop .ao-link-dn,
+#cell-panel.ro-view #cell-addop .ao-link-del, #cell-panel.ro-view .ef-box .btns {
+  display: none;
+}
+.ao-chain { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; }
+.ao-link { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 6px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+.ao-link .ao-ln { color: var(--accent); font-weight: bold; }
+.ao-link .ao-arrow { margin-left: auto; }
+.ao-link-del { padding: 0 6px; }
+#area-panel { width: 380px; flex: 0 0 380px; }   /* 6 tabs need 316px of content; 320px clipped
+                                                    "Teleport" and "Services" to 48px each */
+/* NOT "ad-row". It stood for "area data row" and an ad blocker read it as advertising: generic
+   cosmetic filters hide anything whose class starts with ad-, so the tileset picker, the off-map
+   fill tile and its preview vanished from the panel on any machine with a blocker installed —
+   headings still there, the controls under them gone. Nothing in a class name is worth that. */
+#area-panel .panel-row { display: flex; gap: 6px; align-items: center; color: var(--muted); flex-wrap: wrap; min-height: 26px; }
+/* in-panel tab rows (AREA left / CELL right): full-width segmented switch */
+/* ── Three strips, three levels. They used to look identical (all .mode-switch), so nothing said
+   which one you were choosing IN. Top = the mode, filled. Panel tab = the workplace inside a
+   column, underlined. Tool row = a tool inside that workplace, a small pill. ── */
+.panel-tabs { display: flex; width: 100%; margin-bottom: 12px; border: 0; border-bottom: 1px solid var(--line);
+              border-radius: 0; background: none; }
+.panel-tabs button { background: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.panel-tabs button:hover { color: var(--ink); }
+.panel-tabs button.active { background: none; color: var(--accent); font-weight: bold;
+                            border-bottom-color: var(--accent); }
+/* Says what the column is scoped to right now — the one line that answers "what can I do here". */
+.pane-scope { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase;
+              color: var(--muted); margin: 0 0 8px; display: flex; gap: 6px; align-items: baseline; }
+.pane-scope b { color: var(--accent); font-weight: bold; letter-spacing: 0; text-transform: none; }
+.pane-scope .how { text-transform: none; letter-spacing: 0; }
+
+/* World reads as a TABLE, not as a ragged run of labels: every field is one number, so the numbers
+   belong in a column you can scan down. Per-row grid with fixed tracks — the container width is the
+   same for every row, so `1fr auto` lines up across them without a real table. */
+#world-panel .panel-row { display: grid; grid-template-columns: minmax(0, 1fr) 62px;
+                          gap: 3px 8px; align-items: center; min-height: 24px; }
+#world-panel .panel-row input { width: 100%; }
+/* The note goes on its own line so it cannot push the number column out of alignment — with it in
+   a third track, the one row that HAS a note put its input 82px left of all the others. */
+#world-panel .panel-row .wf-t { grid-column: 1 / -1; font-size: 11.5px; }
+#world-panel .panel-row .wf-t:empty { display: none; }
+#world-panel .panel-row:has(input:disabled) { opacity: .65; }
+#world-events .wev .panel-row { display: grid; grid-template-columns: auto 62px auto 62px;
+                                justify-content: start; gap: 8px; align-items: center; }
+#world-events .wev .panel-row input { width: 100%; }
+#world-sum { border-left: 2px solid var(--accent); padding-left: 8px; }
+.pane-scope .ro { color: var(--muted); border: 1px solid var(--line); border-radius: 4px;
+                  padding: 0 5px; text-transform: none; letter-spacing: 0; }
+/* collapsed to 200px there is no room for the how-to; the mode still shows */
+#cell-panel.cell-mode.empty .pane-scope { flex-wrap: wrap; }
+#cell-panel.cell-mode.empty .pane-scope .how { display: none; }
+/* a foe the engine rolls rather than a record names */
+.npc-thumb.roaming { outline: 1px dashed var(--accent); outline-offset: -1px; }
+
+/* A panel section is a CARD — the same frame the story beats use, for the same reason: a flat run
+   of ten headings reads as one thing. */
+.pcard { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; margin-bottom: 10px;
+         background: var(--panel-2, transparent); }
+.pcard > h2:first-child { margin-top: 0; }
+.pcard:last-child { margin-bottom: 0; }
+/* 5 tabs must FIT the narrow column — shrinkable, tight padding (Code was overflowing clipped) */
+.panel-tabs button { flex: 1 1 auto; min-width: 0; padding: 5px 2px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-tabs[hidden] { display: none !important; }
+#phys-info { margin: 6px 0; }
+
+/* [hidden] must beat the .mode-switch display rule */
+.mode-switch[hidden], .subset-switch[hidden] { display: none !important; }
+
+/* tileset editor: usage highlight + ALL-quadrant row + tools */
+.palette .tile.unused { opacity: .22; }
+.palette .tile.used { outline: 2px solid #7bd88f; outline-offset: -2px; }
+.te-char-all { border-bottom: 1px solid var(--line); padding-bottom: 5px; margin-bottom: 5px; }
+.te-char-all span { color: var(--accent); font-weight: bold; }
+#te-tools { margin: 8px 0 4px; }
+.rec-panel { margin-bottom: 8px; }
+.rec-row { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+.rec-row b { color: var(--ink); }
+
+/* Services tab — one card per shop/doc/bank */
+.svc { border:1px solid var(--line,#333); border-radius:6px; padding:8px 10px; margin-bottom:8px; }
+.svc-row { display:flex; align-items:center; gap:8px; margin-top:4px; }
+.svc-row > span:first-child { min-width:110px; color:var(--muted,#999); font-size:12px; }
+.svc-save { margin-top:8px; }
+
+/* portrait PNG import — drop target + the validator's verdict */
+#portrait-editor.dropping { outline: 2px dashed #6cf; outline-offset: -4px; background: #16202a; }
+#pe-import-msg { margin: 4px 0 2px; padding: 4px 6px; border-radius: 3px; line-height: 1.45; }
+#pe-import-msg.ok   { background: #16301c; color: #9de6a8; }
+#pe-import-msg.warn { background: #322a12; color: #e8c869; }
+#pe-import-msg.err  { background: #3a1b1b; color: #ef9a9a; }
+
+/* talk / revive services: one ASCII text box per page */
+.svc-pages { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+.svc-page { display: flex; gap: 5px; align-items: flex-start; }
+.svc-page > span { flex: 0 0 52px; font-size: 11px; color: var(--muted); padding-top: 5px; }
+.svc-page textarea { flex: 1 1 auto; min-width: 0; background: var(--bg); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit;
+  font-size: 12px; line-height: 1.35; resize: vertical; }
+.svc-budget { font-size: 11px; }
+.svc-budget.tight { color: #e8c869; }
+.svc-budget.over  { color: #ef9a9a; }
+
+/* cell state: what is drawn vs what the map holds vs what scripts turn it into */
+.st-tile { display: inline-block; min-width: 2.2em; text-align: center; padding: 0 4px;
+  border: 1px solid var(--line); border-radius: 3px; background: var(--bg); color: var(--accent); }
+
+/* ── Flow tab: script chains as an actual graph ── */
+#flow-list { width: 240px; flex: 0 0 240px; }
+.flow-item { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px; cursor: pointer; }
+.flow-item:hover { border-color: var(--accent); }
+.flow-item.active { border-color: var(--accent); background: #1b2330; }
+.flow-detail { flex: 1 1 0; min-width: 0; max-height: 84vh; overflow: auto;
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel); }
+.fl-head { color: var(--accent); font-weight: bold; margin-bottom: 8px; }
+.fl-wrap { overflow: auto; max-height: 60vh; border: 1px solid var(--line); border-radius: 6px; background: #0e1116; }
+.fl-n rect { fill: var(--bg); stroke: var(--line); }
+.fl-n:hover rect { stroke: var(--accent); cursor: pointer; }
+.fl-n.sel rect { stroke: var(--accent); fill: #1b2330; }
+.fl-n.hot rect { stroke: #e6c15a; }
+.fl-n.first rect { stroke-dasharray: 3 3; opacity: .8; }
+.fl-t { fill: var(--ink); font: 12px inherit; font-weight: bold; }
+.fl-dim { fill: var(--muted); font: 11px inherit; font-weight: normal; }
+.fl-txt { fill: #7bd88f; font: 11px inherit; }
+.fl-e { fill: none; stroke: #4a5566; stroke-width: 1.4; marker-end: url(#ah); }
+.fl-el { fill: var(--muted); font: 10px inherit; }
+#ah path { fill: #4a5566; }
+#fl-mini { margin-top: 10px; border: 1px solid var(--line); border-radius: 4px; image-rendering: pixelated; }
+.fl-link { color: var(--accent); cursor: pointer; }
+.fl-link:hover { text-decoration: underline; }
+
+.fl-title { font-size: 11px; color: #7bd88f; line-height: 1.3; margin-top: 3px; }
+
+/* Text tab: staged save + char-table budget */
+#txt-save, #txt-revert { margin-left: 6px; }
+.txt-budget { font-size: 11px; margin: 4px 0 8px; padding: 3px 6px; border-radius: 4px; min-height: 1em; }
+.txt-budget.ok   { background: #16301c; color: #9de6a8; }
+.txt-budget.over { background: #3a1b1b; color: #ef9a9a; }
+.txt-ta.dirty { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+
+/* talk page-id manager (Services tab) */
+.svc-tpages { display: flex; flex-direction: column; gap: 3px; margin: 4px 0; }
+.svc-tpages .svc-page { display: flex; align-items: center; gap: 6px; }
+.svc-tpages .svc-page > span:first-child { flex: 0 0 48px; font-size: 11px; color: var(--muted); }
+.tp-str { flex: 0 0 auto; color: var(--accent); cursor: pointer; font-size: 12px; }
+.tp-str:hover { text-decoration: underline; }
+.tp-prev { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-ctl { flex: 0 0 auto; display: inline-flex; gap: 2px; }
+.tp-ctl .mini { padding: 1px 5px; }
+
+/* cell script view (⚡ overlay) */
+.sc-list { display: flex; flex-direction: column; gap: 3px; margin: 4px 0; }
+.sc-step { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.sc-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; }
+.sc-verb { flex: 0 0 auto; color: var(--muted); min-width: 62px; }
+.sc-body { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-foe { width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 3px; image-rendering: pixelated; object-fit: cover; }
+.sc-tile { width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 3px; image-rendering: pixelated; vertical-align: middle; }
+.sc-under, .sc-inc { margin-top: 6px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+/* script-hook hover overlay */
+#script-tip { position: fixed; z-index: 50; max-width: 360px; pointer-events: none;
+  background: #12161c; border: 1px solid var(--accent); border-radius: 7px; padding: 8px 10px;
+  box-shadow: 0 6px 24px #000a; }
+#script-tip[hidden] { display: none; }
+#script-tip .insp-sec { border: 0; padding: 0; }
+#script-tip .insp-title { margin-bottom: 6px; }
+#script-tip .fl-link { display: none; }   /* not clickable in a hover tip */
+
+/* Play tab — the embedded live C64 (wl-trx64 sidecar) */
+  /* flex:1 — else the <main> flex row shrinks it to content size */
+   /* 3x of 384 — the component scales itself */
+
+/* $CA00 scene-handler disassembly (op-6 SERVICE, mirrors the grp16 code view) */
+.scene-code-btn { margin-top: 6px; }
+.scene-code { margin-top: 4px; }
+.scene-listing {
+  font-family: "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.35;
+  background: #14161b; color: #cdd3de; border: 1px solid #2a2f3a; border-radius: 4px;
+  padding: 6px 8px; margin: 4px 0 0; max-height: 340px; overflow: auto; white-space: pre;
+}
+
+/* AREA Code tab — machine-derived handler facts (wl_grp16), shown above the hand-written note */
+.code-facts { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 6px; }
+.code-facts .chip { background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+                    padding: 1px 7px; font-size: 11px; color: var(--ink); }
+.code-facts .chip.muted { color: var(--muted); }
+
+/* Flow tab: hand-over chains (record -> record, no map rewrite) */
+.fl-sub { margin: 10px 0 4px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+          color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
+.fl-ho { font-size: 11px; }
+.fl-step { display: inline-block; padding: 0 3px; border: 1px solid var(--line); border-radius: 3px;
+           margin: 1px 0; white-space: nowrap; }
+.fl-ho:hover .fl-step { border-color: var(--accent); }
+
+
+/* ── blueprints: a map region as a re-usable object ── */
+.bp-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.bp-row { border: 1px solid var(--line, #2a3240); border-radius: 5px; padding: 6px 8px;
+          background: rgba(255,255,255,.02); }
+.bp-row .btns { margin-top: 4px; }
+.bp-name { display: flex; gap: 6px; align-items: baseline; }
+#bp-cut { border: 1px solid var(--line, #2a3240); border-left: 3px solid #7bd88f;
+          border-radius: 5px; padding: 6px 8px; margin: 6px 0; font-size: 12px; }
+.bp-cut-head { margin-bottom: 3px; }
+/* A requirement is not an error: the object references something it does not own, which is often
+   exactly right (a shared bump message). It has to be VISIBLE, not alarming. */
+.bp-req { color: #e6c15a; font-size: 11.5px; line-height: 1.35; margin-top: 3px; }
+.bp-note { color: #8b95a5; font-size: 11.5px; line-height: 1.35; margin-top: 3px; }
+.bp-bad { color: #ef6a6a; font-size: 12px; }
+#bp-report { margin-top: 6px; line-height: 1.4; }
+
+
+/* ── tab row: Play is a running machine, not an editor view — it sits apart ── */
+/* STRETCH, not center. A label carrying an emoji (✎ Designer, ▶ Live) has a taller line box than a
+   plain one, and centred buttons of unequal height stick out top and bottom — where the rounded
+   frame's `overflow: hidden` clips them. On screen that read as a tab riding up out of the row.
+   Stretch makes every button the strip's height, so one emoji sets the height for all of them. */
+.tabs { display: flex; align-items: stretch; }
+.tabs button { display: flex; align-items: center; }
+.tabs-gap { flex: 1 1 auto; min-width: 18px; }
+
+/* ── sub-views of a top tab: the SAME segmented widget as Areas' View/Edit/Flow (.mode-switch
+   supplies the look); this class only marks it for the JS and adds the gap to whatever follows.
+   Which panes a strip offers is GROUPS in main.js — never this file. ── */
+.sub-switch { margin-right: 12px; }
+
+/* ── Blueprints workbench ── */
+main.bpw { display: grid; grid-template-columns: 260px minmax(0, 1fr) 300px; gap: 14px;
+           align-items: start; }
+.bpw-lib, .bpw-side { min-width: 0; }
+.bpw-mid { min-width: 0; }
+/* the block draws itself from its OWN tile pictures, so it is shown on a neutral ground rather
+   than any area's background */
+#bpw-canvas { image-rendering: pixelated; background: #11151c; border: 1px solid var(--line, #2a3240);
+              border-radius: 5px; max-width: 100%; cursor: cell; }
+#bpw-cellinfo { min-height: 16px; margin: 4px 0; }
+#bpw-notes { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; line-height: 1.45;
+             background: rgba(0,0,0,.25); color: inherit; border: 1px solid var(--line, #2a3240);
+             border-radius: 5px; padding: 6px 8px; resize: vertical; }
+.bp-row.on { border-color: #7bd88f; background: rgba(123,216,143,.07); }
+.bp-list .bp-row { cursor: pointer; }
+#bpw-palette .sw { image-rendering: pixelated; width: 32px; height: 32px; cursor: pointer;
+                   border: 2px solid transparent; border-radius: 3px; }
+#bpw-palette .sw.on { border-color: #7bd88f; }
+
+
+/* ── Quests: derived links (left as data) + the authored naming (the only editable part) ── */
+main.qw { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; align-items: start; }
+.qw-list, .qw-detail { min-width: 0; }
+/* An <aside> inside a GRID main must not keep the FLEX layout's fixed 320px. The track already
+   decides the width, and a 320px box in a 300px track does not shrink — it spills over its
+   neighbour, which is why the quest list sat on top of the column beside it. */
+main.qw > aside, .dq-main > aside, main.bpw > aside { width: auto; flex: 1 1 auto; min-width: 0; }
+.q-region { margin: 10px 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+            color: #8b95a5; }
+.q-row { border: 1px solid var(--line, #2a3240); border-radius: 5px; padding: 5px 8px;
+         margin-bottom: 4px; cursor: pointer; background: rgba(255,255,255,.02); }
+.q-row:hover { border-color: #4a5464; }
+.q-row.on { border-color: #7bd88f; background: rgba(123,216,143,.07); }
+.q-row.q-un { border-style: dashed; }
+.q-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+#q-name { flex: 1 1 auto; font: inherit; font-size: 15px; font-weight: 600; color: inherit;
+          background: rgba(0,0,0,.25); border: 1px solid var(--line, #2a3240); border-radius: 5px;
+          padding: 5px 8px; }
+#q-notes { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; line-height: 1.45;
+           background: rgba(0,0,0,.25); color: inherit; border: 1px solid var(--line, #2a3240);
+           border-radius: 5px; padding: 6px 8px; resize: vertical; margin-bottom: 8px; }
+.q-areas { margin-bottom: 10px; }
+.q-link { border: 1px solid var(--line, #2a3240); border-left: 3px solid #5aa9e6; border-radius: 5px;
+          padding: 7px 10px; margin-bottom: 8px; }
+/* "loose" = an item lying around everywhere, or a word nobody says — still shown, just quieter */
+.q-link.loose { border-left-color: #4a5464; opacity: .78; }
+.q-link-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 5px; }
+.q-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.q-cap { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: #8b95a5; }
+.q-cols ul { margin: 2px 0 0; padding-left: 15px; }
+.q-cols li { margin-bottom: 3px; font-size: 12px; }
+.q-line { color: #8b95a5; font-size: 11.5px; line-height: 1.35; font-style: italic; }
+.q-cell { margin-left: 3px; }
+
+
+/* One control row for every view of an area: the picker and the mode switch never move, only the
+   tail after them swaps. Keeps the row ONE line high in both views. */
+#areas-bar { flex-wrap: wrap; }
+.ctl-tail { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* `display: flex` on the row and on the tails beats the browser's own [hidden] rule, so hiding
+   them from JS did nothing and the area bar stayed on screen under World. */
+#areas-bar[hidden], .ctl-tail[hidden] { display: none !important; }
+
+
+/* ── a quest step: the record renders itself, the order and the note are authored ── */
+.q-cap { margin: 14px 0 6px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+         color: #8b95a5; display: flex; align-items: center; gap: 8px; }
+.q-steps { display: flex; flex-direction: column; gap: 6px; }
+.q-step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line, #2a3240);
+          border-radius: 6px; padding: 7px 10px; background: rgba(255,255,255,.02); }
+.q-step.broken { border-color: #7a4040; }
+.q-step-body { flex: 1 1 auto; min-width: 0; }
+.q-step-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; }
+.q-num { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; background: #5a6472;
+         color: #10141a; font-weight: 700; font-size: 11px; line-height: 20px; text-align: center; }
+.q-said { color: #cfd6e0; font-size: 12.5px; line-height: 1.4; margin: 1px 0; }
+.q-note { color: #8b95a5; font-size: 11.5px; line-height: 1.4; margin-top: 3px;
+          border-left: 2px solid #3a4250; padding-left: 7px; }
+.q-face { height: 26px; vertical-align: middle; image-rendering: pixelated; border-radius: 2px; }
+.q-step-tools { flex: 0 0 auto; display: flex; gap: 2px; opacity: .35; }
+.q-step:hover .q-step-tools { opacity: 1; }
+
+
+/* Flow: the events that carry a story, separated from the furniture */
+.flow-item.on-quest { border-left: 3px solid #7bd88f; }
+.fl-q { color: #7bd88f; font-size: 11px; line-height: 1.3; margin: 2px 0; }
+
+
+/* the paragraph book, shown where the record only points at it */
+.q-para { color: #cdb98a; font-size: 11.5px; line-height: 1.45; margin-top: 4px;
+          border-left: 2px solid #6a5a3a; padding-left: 8px; }
+.q-para b { color: #e6c15a; margin-right: 5px; }
+
+
+/* the main line: one chain, in order, above everything you merely find */
+.q-stage { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #6a7482;
+           margin: 6px 0 3px 2px; }
+.q-row.main { border-left: 3px solid #e6c15a; }
+.q-sub { margin: 8px 0 3px; font-size: 11px; color: #6a7482; }
+
+
+/* ── independent scrolling: a list and its detail are two panes, not one page ──
+   Scrolling the left column dragged the right one with it, which makes a long event list
+   unreadable — you lose the thing you were looking at the moment you go looking for the next one.
+   Each column now owns its own scrollbar and its own height. */
+#flow-list, .qw-list, .qw-detail, .bpw-lib, .bpw-side, .bpw-mid {
+  max-height: calc(100vh - 190px); overflow-y: auto; overscroll-behavior: contain;
+}
+#flow-list { padding-right: 6px; }
+.qw-list, .bpw-lib { padding-right: 6px; }
+.fl-fold { cursor: pointer; user-select: none; }
+.fl-fold:hover { color: var(--accent); }
+
+
+/* ── the default party ── */
+main.paw { display: grid; grid-template-columns: minmax(0,1fr) 300px; gap: 14px; align-items: start; }
+#pa-list { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 190px);
+           overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
+.pa-card { border: 1px solid var(--line, #2a3240); border-radius: 6px; padding: 9px 12px;
+           background: rgba(255,255,255,.02); }
+.pa-head { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
+.pa-head input, .pa-attrs input, .pa-nums input, .pa-row input {
+  font: inherit; background: rgba(0,0,0,.25); color: inherit;
+  border: 1px solid var(--line, #2a3240); border-radius: 4px; padding: 3px 6px; }
+.pa-name { font-size: 14px; font-weight: 600; width: 150px; }
+.pa-rank { width: 120px; font-size: 12px; }
+.pa-attrs, .pa-nums { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 7px; }
+.pa-attrs label, .pa-nums label { display: inline-flex; align-items: center; gap: 4px;
+                                  font-size: 11.5px; color: #8b95a5; }
+.pa-attrs input { width: 46px; } .pa-nums input { width: 72px; }
+.pa-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.pa-row { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+          font-size: 12px; padding: 1px 0; }
+/* the equipped weapon and armour are INDEXES into this list, so mark the rows they point at */
+.pa-row.on { color: #7bd88f; }
+.pa-row input { width: 60px; }
+.pa-ship { color: #7bd88f; }
+
+/* a foe that exists in the tables but no encounter references yet — still editable, but the
+   panel must say so, because an unreferenced foe is invisible in the game. */
+.npc-thumb.unnamed { opacity: .55; border-style: dashed; }
+.npc-thumb.unnamed::after { content: "unused"; position: absolute; right: 3px; bottom: 2px;
+                           font-size: 9px; color: var(--muted); }
+
+/* script CHAINS — a questline is a path through cell states, and most of its steps have no cell
+   of their own, so it has to be shown as a list rather than on the map. */
+.chain { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+.chain-head { background: var(--bg); padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.chain-step { padding: 5px 8px 5px 14px; border-top: 1px solid var(--line); cursor: pointer; }
+.chain-step:first-of-type { border-top: 0; }
+.chain-step:hover { background: var(--bg); }
+.chain-op { color: var(--accent); }
+.chain-sum { margin-left: 12px; }
+.cellrow { margin: 2px 0; }
+.chain.chain-hit { outline: 2px solid var(--accent); }
+
+/* --- the story fold: beats are rows, plumbing is the arrow between them ------------------- */
+/* A CELL_PATCH is not a step the player takes, it is how one step reaches the next. Drawn as a box
+   it reads like an event; drawn as an arrow it reads like what it is. Hence: no border, no cursor,
+   indented under the beat it leaves. */
+.chain-edge { padding: 2px 8px 4px 26px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.edge-lbl { color: var(--muted); }
+.beat-n { display: inline-block; min-width: 15px; margin-right: 5px; text-align: right;
+          color: var(--muted); font-variant-numeric: tabular-nums; }
+.beat-cell { color: var(--accent2, var(--accent)); margin-left: 4px; }
+/* Debug detail is a switch, not a column — off unless the question is about bytes. */
+.dbg { display: none; opacity: .55; font-size: 11px; }
+body.show-dbg .dbg { display: inline; }
+#chain-dbg-wrap { float: right; font-weight: 400; cursor: pointer; }
+#chain-dbg-wrap input { vertical-align: -1px; margin-right: 3px; }
+
+/* --- the gate: grammar, budget, fit, before any of it becomes bytes ----------------------- */
+.gate { margin: 0 0 8px; }
+.gate-line { font-size: 11.5px; color: var(--muted); padding: 3px 0; }
+.gate-ok { color: var(--ok, #6cc06c); }
+.gate-warn { color: var(--warn, #d8a24a); }
+.gate-err { color: var(--bad, #e06c6c); }
+.gate-f { border-left: 3px solid var(--line); padding: 3px 0 3px 8px; margin: 3px 0; font-size: 11.5px; }
+.gate-f.gate-error { border-left-color: var(--bad, #e06c6c); }
+.gate-f.gate-warn { border-left-color: var(--warn, #d8a24a); }
+
+/* --- EVENTS: the area as outlines (replaced the SVG canvas) ------------------------------- */
+.ev-card { padding: 6px 9px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ev-card:hover { background: var(--bg); }
+.ev-card.active { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.ev-card.on-quest { border-left: 3px solid var(--accent); }
+.ev-card .ev-q { color: var(--accent); font-size: 11.5px; }
+.ev-card .ev-t { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+.ev-sub { cursor: pointer; }
+.ev-outline { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-bottom: 10px; }
+.ev-outline .chain-step { border-top: 1px solid var(--line); }
+.ev-outline .chain-step:first-child { border-top: 0; }
+.ev-edge { padding: 2px 8px 4px 26px; color: var(--muted); font-size: 11.5px; }
+/* A rejoin is not a step — it is a pointer back to one already shown, so it does not invite a click. */
+.ev-beat.rejoin { opacity: .6; cursor: default; }
+.ev-rejoin { color: var(--muted); font-size: 11px; margin-left: 6px; }
+#fl-mini { image-rendering: pixelated; border: 1px solid var(--line); border-radius: 4px; }
+
+/* The form opens under the beat it belongs to, not at the bottom of the list. */
+.chain-inline { border-top: 1px solid var(--line); background: var(--bg); padding: 2px 8px 6px; }
+.chain-step.open { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+/* arriving from somewhere else: say WHICH row, then stop saying it */
+.chain-step.hit, .svc.hit { animation: step-flash 1.6s ease-out; }
+@keyframes step-flash { from { background: var(--accent); color: #000; } to { background: none; } }
+
+/* --- WORLD: the area's own physics, and the events that retune it ------------------------- */
+.wev { border-top: 1px solid var(--line); padding: 5px 2px; }
+.wev:first-of-type { border-top: 0; }
+.wev-h { cursor: pointer; }
+.wev-h:hover b { color: var(--accent); }
+.wev .panel-row { margin: 2px 0 0 0; }
+
+/* ═══════════════ DESIGN — a quest, top down ═══════════════ */
+/* The one screen here with no ids on it. A foe is a face, an item is a name, a check is a skill you
+   recognise. The numbers still exist — they are just not the designer's problem. */
+.dq-main { display: grid; grid-template-columns: 290px 300px minmax(0, 1fr); gap: 0;
+            height: calc(100vh - 122px); padding: 0; align-items: stretch; }
+            /* 60 header + 58 quest row + 4 slack — the Design tab has no main padding, so it
+               subtracts less than the Areas tab does. Ten pixels over is still a page scrollbar. */
+/* The left column carries the AXIS now, not just a list of names — so it narrows before it goes.
+   Losing it means losing the backbone of the quest, which is worse than a cramped column. */
+@media (max-width: 1280px) { .dq-main { grid-template-columns: 250px 260px minmax(0, 1fr); } }
+@media (max-width: 980px) { .dq-main { grid-template-columns: 250px minmax(0, 1fr); } .dq-mid { display: none; } }
+@media (max-width: 760px) { .dq-main { grid-template-columns: 1fr; } .dq-left { display: none; } }
+/* The two rails scroll as ONE column each: the quest list, the axis and the markers belong to the
+   same question ("which quest, and what is it made of") and pushing them apart into three little
+   viewports made the axis a slot you had to hunt for. */
+.dq-left, .dq-mid { border-right: 1px solid var(--line); overflow-y: auto; padding: 8px;
+                    min-width: 0; overscroll-behavior: contain; }
+.dq-quests .q-row { cursor: pointer; padding: 5px 8px; border-radius: 5px; overflow-wrap: anywhere; }
+.dq-quests .q-row:hover { background: var(--bg); }
+.dq-quests .q-row.on { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.dq-badge { font-size: 10px; border: 1px solid var(--accent); color: var(--accent);
+            border-radius: 99px; padding: 0 5px; }
+.dq-work { overflow-y: auto; padding: 14px 18px; }
+.dq-qname { font-weight: 600; margin-bottom: 8px; }
+
+/* ── the state axis: rows of id + log, `open` fixed at the top ── */
+.dq-axis, .dq-marks { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ax-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px;
+          align-items: center; margin-bottom: 5px; }
+.ax-row .ax-log { grid-column: 1 / -1; }
+.ax-row input { font: inherit; font-size: 12px; background: rgba(0,0,0,.25); color: inherit;
+                border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; min-width: 0; }
+.ax-row .ax-id { font-weight: 600; }
+.ax-row .ax-log { font-size: 11.5px; color: var(--muted); }
+/* `open`, `done` and `failed` are the model's own words — shown, never typed over */
+.ax-fixed { font-weight: 600; color: var(--accent); font-size: 12.5px; }
+.ax-open { opacity: .65; }
+.ax-tools { display: flex; gap: 2px; opacity: .35; }
+.ax-row:hover .ax-tools { opacity: 1; }
+
+/* ── markers: id, what kind of thing it is, and the thing ── */
+.mk-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px;
+          align-items: center; margin-bottom: 6px; }
+.mk-row .mk-val { grid-column: 1 / -1; }
+.mk-row input, .mk-row select { font: inherit; font-size: 12px; background: rgba(0,0,0,.25);
+          color: inherit; border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px;
+          min-width: 0; }
+.mk-row .mk-id { font-weight: 600; }
+.mk-at input { width: 46px; }
+
+/* ── the battery, under the beats it is about ── */
+.dq-checks { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ck { font-size: 11.5px; line-height: 1.4; margin-bottom: 4px; padding-left: 8px;
+      border-left: 2px solid var(--line); }
+.ck[data-step] { cursor: pointer; }
+.ck[data-step]:hover { background: var(--bg); }
+.ck-k { font-family: var(--mono); font-size: 10.5px; opacity: .8; margin-right: 4px; }
+/* an error is a quest that cannot work, a warning is one that probably is not what you meant, and
+   info is arithmetic — three claims, three weights */
+.ck-err { border-left-color: #ef6a6a; color: #ef6a6a; }
+.ck-warn { border-left-color: var(--warn, #d8a24a); color: var(--warn, #d8a24a); }
+.ck-info { color: var(--muted); }
+
+/* ── gate and effect: both may be empty, and empty says nothing ── */
+.dq-bind { display: flex; flex-direction: column; gap: 6px; }
+.dq-bind label { flex-wrap: wrap; }
+.dq-bind label > span:first-child { min-width: 46px; color: var(--muted); }
+
+.dq-step { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px;
+           cursor: pointer; }
+.dq-step:hover { background: var(--bg); }
+.dq-step.active { box-shadow: inset 3px 0 0 var(--accent); background: var(--bg); }
+.dq-step .dq-n { display: inline-block; min-width: 17px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dq-step .dq-title { font-weight: 500; }
+.dq-step .dq-meta { color: var(--muted); font-size: 11.5px; margin-left: 17px; }
+/* The three states are the model, so they are the thing you see first. */
+.dq-state { border-radius: 99px; padding: 0 6px; font-size: 10.5px; border: 1px solid var(--line); }
+.dq-sketch { color: var(--muted); }
+/* found = it was already there; placed = this editor put it there. Different claims, different colours. */
+.dq-found { color: #6a7482; border-color: #3a4152; }
+.dq-cast { color: var(--warn, #d8a24a); border-color: var(--warn, #d8a24a); }
+/* what the beat does to the axis — a gate it needs, a state it moves to */
+.dq-gate-tag, .dq-bind-tag { color: var(--accent); border-color: var(--accent); }
+.dq-placed { color: var(--ok, #6cc06c); border-color: var(--ok, #6cc06c); }
+
+.dq-h { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.dq-about { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+.dq-fam { margin: 14px 0 6px; }
+.dq-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 8px; }
+.dq-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; cursor: pointer; }
+.dq-card:hover { border-color: var(--accent); background: var(--bg); }
+.dq-card-n { font-weight: 600; }
+.dq-card-a { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.dq-seen { color: var(--muted); font-size: 11px; margin-top: 4px; opacity: .75; }
+
+.dq-beats { margin: 6px 0 14px; }
+.dq-beat { border: 1px solid var(--line); border-radius: 5px; padding: 2px 8px; color: var(--accent); }
+.dq-arrow { color: var(--muted); margin: 0 5px; }
+
+.dq-hole { margin-bottom: 12px; }
+.dq-hl { font-size: 12.5px; margin-bottom: 3px; }
+.dq-in { width: min(520px, 100%); }
+.dq-ta { font-family: inherit; }
+.dq-items .dq-item { margin-bottom: 3px; }
+.dq-chk { margin-left: 8px; color: var(--muted); font-size: 12px; }
+/* Faces, not numbers — the thing that makes a foe feel like a foe while you are choosing it. */
+.dq-faces { display: flex; flex-wrap: wrap; gap: 4px; max-height: 168px; overflow-y: auto;
+            border: 1px solid var(--line); border-radius: 6px; padding: 5px; margin-top: 4px; }
+.dq-face { width: 44px; height: 44px; object-fit: cover; image-rendering: pixelated;
+           border: 2px solid transparent; border-radius: 4px; cursor: pointer; background: #000; }
+.dq-face:hover { border-color: var(--muted); }
+.dq-face.sel { border-color: var(--accent); }
+.dq-newfoe { display: block; margin-top: 4px; }
+
+.dq-place { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.dq-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dq-go { border-color: var(--accent); color: var(--accent); }
+.dq-done { color: var(--ok, #6cc06c); }
+.dq-rec { border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted);
+          font-size: 11.5px; }
+
+
+/* ── truncation says so ─────────────────────────────────────────────────────────────────── */
+/* Cards used to end mid-word ("attribute che") with nothing to say more was coming. Two lines,
+   then an ellipsis — the reader can tell the difference between "that is all" and "there is more". */
+.ev-card .ev-t, .dq-step .dq-meta, .dq-quests .q-row .small, .flow-item .fl-title {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ── the view toggles are options, not tools ────────────────────────────────────────────── */
+/* Four checkboxes, a zoom stepper, undo and a size readout in the top row wrapped it to FOUR lines
+   and split the "⤢ fit" button across two of them. They stay together and stop wrapping mid-control. */
+#areas-map-tail { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; row-gap: 4px; }
+#areas-map-tail .layer-toggle, #areas-map-tail .zoom-ctl { white-space: nowrap; }
+#zoom-fit { white-space: nowrap; }
+
+
+/* ── the blueprint library holds three families, not one ─────────────────────────────────── */
+.bp-fam { margin: 14px 0 6px; font-size: 11px; letter-spacing: .06em; color: var(--muted); }
+.bp-fam:first-child { margin-top: 0; }
+.bp-fam b { color: var(--ink); }
+.bp-cat .bp-holes { opacity: .7; margin-top: 2px; }
+.bp-seen { font-size: 10.5px; color: var(--accent); border: 1px solid var(--line);
+           border-radius: 99px; padding: 0 6px; margin-left: 6px; }
+.bp-cat-detail p { margin: 0 0 10px; color: var(--ink); }
+.bp-holelist { margin: 4px 0 12px; padding-left: 18px; }
+.bp-holelist li { margin-bottom: 3px; }
+
+
+/* ── the workbench belongs to a BUILDING ─────────────────────────────────────────────────── */
+/* Paint, Erase, the tile brush, Contents and Notes are all about a map region. A pattern has no
+   region — showing them greyed out beside its description says "you could do this here", which is
+   the opposite of true. They go away entirely and the description gets the room. */
+#tab-blueprints.cat-mode #bpw-tools,
+#tab-blueprints.cat-mode #bpw-canvas,
+#tab-blueprints.cat-mode #bpw-cellinfo,
+#tab-blueprints.cat-mode .bpw-mid > .btns,
+#tab-blueprints.cat-mode .bpw-side { display: none; }
+#tab-blueprints.cat-mode main.bpw { grid-template-columns: 260px minmax(0, 1fr); }
+
+
+/* ── a face is faster to recognise than an id ────────────────────────────────────────────── */
+.dq-face-sm { width: 22px; height: 22px; vertical-align: -5px; margin-right: 4px; border-width: 1px; }
+.dq-face-lg { width: 34px; height: 34px; vertical-align: -10px; margin-left: 6px; border-color: var(--accent); }
+.dq-now { margin-left: 4px; }
+.dq-chosen { color: var(--accent); margin-left: 6px; }
+
+
+/* ── strings say what they mean ──────────────────────────────────────────────────────────── */
+/* The raw form is what is edited and saved; the readable one sits above it and is never editable,
+   so there is no doubt which of the two the game will see. */
+.txt-reads { color: var(--ink); font-size: 12.5px; margin: 2px 0 3px; opacity: .92; }
+.txt-row-combat { border-left: 2px solid #6a7482; padding-left: 7px; }
+.txt-combat { font-size: 10.5px; color: #6a7482; border: 1px solid var(--line);
+              border-radius: 99px; padding: 0 6px; }
+.txt-codes { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 10px; font-size: 11.5px; }
+.txt-code { border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+
+
+/* ── the area's fight vocabulary, read as a configuration ────────────────────────────────── */
+.cb-row { display: grid; grid-template-columns: 1fr; gap: 1px; padding: 5px 0;
+          border-bottom: 1px solid var(--line); }
+.cb-lbl { font-size: 12px; }
+/* The readable form is the one you judge; the raw one underneath is the one that ships. */
+.cb-reads { color: var(--ink); font-size: 12.5px; opacity: .92; }
+.cb-ta { width: 100%; font-family: var(--mono); font-size: 11.5px; background: var(--bg);
+         color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px;
+         resize: vertical; }
+
+
+/* ── Events: where it happens, at the top and staying there ──────────────────────────────── */
+/* The map used to sit under the outline, so finding out WHERE a chain runs meant scrolling past
+   the steps and back. One fixed row: map left, what-and-where right, steps below. It sticks,
+   because the answer to "where" should not scroll away while you read the steps. */
+.ev-top { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(200px, 40%); gap: 14px; align-items: start;
+          position: sticky; top: 0; z-index: 2; background: var(--panel);
+          padding: 0 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.ev-top #fl-mini { width: 168px; height: 168px; }
+.ev-top-txt { min-width: 0; }
+.ev-top-quest { color: var(--accent); font-size: 12.5px; margin: 2px 0 4px; }
+.ev-top #fl-note { overflow-wrap: anywhere; }
+.ev-top #ev-tree { width: 100%; height: 168px; border: 1px solid var(--line); border-radius: 6px;
+                   background: var(--bg); cursor: crosshair; }
+@media (max-width: 1200px) { .ev-top { grid-template-columns: auto minmax(0, 1fr); }
+                             .ev-top #ev-tree { display: none; } }
+@media (max-width: 900px) { .ev-top { grid-template-columns: 1fr; } }
+
+
+/* ── a COND is a menu of what you can do on the square, not one sentence ─────────────────── */
+.q-acts { margin-top: 3px; }
+.q-act { padding: 1px 0 1px 10px; border-left: 2px solid var(--line); color: var(--ink);
+         font-size: 12.5px; }
+.q-act:hover { border-left-color: var(--accent); }
+
+.q-act.dead { opacity: .55; }
+.q-never { color: var(--bad, #e06c6c); font-size: 11.5px; }
+
+.q-role { font-size: 10.5px; color: var(--accent); border: 1px solid var(--line);
+          border-radius: 99px; padding: 0 6px; margin-left: 6px; }
+
+.q-split { margin-top: 3px; }
+.q-rg { display: inline-block; border: 1px solid var(--line); border-radius: 5px; padding: 1px 7px;
+        margin: 3px 5px 0 0; font-size: 11.5px; }
+.q-rg.costly { border-color: var(--accent); color: var(--accent); }
+.q-do-split { color: var(--accent); text-decoration: underline dotted; cursor: pointer; }
+.q-rw { display: inline-block; border: 1px solid var(--line); border-radius: 5px;
+        padding: 1px 7px; margin: 2px 4px 0 0; font-size: 11.5px; }
+
+.npc-thumb.unnamed { opacity: .62; border-style: dashed; }
+
+/* ═══════════════ EVENTS as a FLOWCHART ═══════════════ */
+/* Three columns: the chains, the chain, the one beat you are editing. The inspector is FIXED —
+   opening it between the rows pushed everything below down, so a beat and what it hands over to
+   could never be on screen together. */
+main.evw { display: grid; grid-template-columns: 240px minmax(0, 1fr) 380px; gap: 14px;
+           align-items: start; }
+main.evw > aside, main.evw > .flow-detail { width: auto; min-width: 0; }
+.ev-insp { max-height: calc(100vh - 160px); overflow-y: auto; }
+.ev-insp .ef-box { border: 0; padding: 0; }
+
+/* The graph owns BOTH scroll axes. Without a height it just grew, so the vertical scroll fell
+   through to .flow-detail while the horizontal stayed here — the overview's viewport rectangle and
+   its click-to-jump were reading one scroller and moving another. The sticky header already says
+   the picture is meant to scroll under it; this makes that true. */
+.ev-flow { height: calc(100vh - 420px); min-height: 320px; overflow: auto; padding: 4px 2px 14px; }
+.gwrap { position: relative; }
+.gsvg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.gedge { fill: none; stroke: #4a5464; stroke-width: 1.5; }
+.gedge-lbl { font-size: 11px; line-height: 1.2; color: var(--muted); text-align: center;
+             background: var(--panel); padding: 1px 4px; border-radius: 4px;
+             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+             overflow: hidden; }
+.gnode { position: absolute; width: 208px; height: 62px; box-sizing: border-box;
+         border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+         padding: 5px 8px; cursor: pointer; overflow: hidden; }
+.gnode:hover { border-color: var(--accent); }
+.gnode.sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.gnode-h { display: flex; gap: 6px; align-items: baseline; }
+.gnode-t { color: var(--muted); font-size: 11.5px; line-height: 1.3; margin-top: 2px;
+           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* a rejoin is a pointer back to a node already drawn — not a step, so it does not invite a click */
+.gnode.rejoin { border-style: dashed; opacity: .6; cursor: default; }
+.gend { height: auto; width: auto; padding: 2px 8px; color: var(--muted); font-size: 11px;
+        border-style: dashed; cursor: default; }
+/* a fan row: one line, because a stack of 29 endings is a list and reads like one */
+.gnode.gfan { height: 38px; display: flex; gap: 6px; align-items: baseline; padding: 8px 8px; }
+.gnode.gfan .gfan-t { color: var(--muted); font-size: 11.5px; white-space: nowrap;
+                      overflow: hidden; text-overflow: ellipsis; }
+
+/* an id resolved: the string it names, the face it names */
+.ef-prev { margin-top: 3px; padding: 3px 6px; border-left: 2px solid var(--line);
+           color: var(--ink); font-size: 12px; line-height: 1.35; max-height: 60px; overflow: auto; }
+.ef-foe { display: flex; gap: 8px; align-items: center; }
+.ef-foe-img { width: 34px; height: 34px; object-fit: cover; border: 1px solid var(--line);
+              border-radius: 4px; image-rendering: pixelated; background: var(--bg); }
+.ef-foe-sel { min-width: 0; flex: 1 1 auto; }
+
+/* ═══════════════ QUESTS · Journey ═══════════════ */
+/* A section is a run of steps in one place. The header is FIXED and follows what you are reading:
+   that section's map, what happens in it, and the numerals to jump between them. */
+main.qw { grid-template-columns: 300px minmax(0, 1fr) 380px; }
+main.qw > #q-insp[hidden] { display: none; }
+.jr-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: start;
+          padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.jr-top #jr-mini { width: 150px; height: 150px; border: 1px solid var(--line); border-radius: 6px;
+                   image-rendering: pixelated; }
+.jr-head b { color: var(--accent); font-size: 15px; }
+.jr-nav { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; justify-content: flex-end; }
+.jr-chip { background: var(--bg); color: var(--muted); border: 1px solid var(--line);
+           border-radius: 5px; padding: 3px 8px; font: inherit; font-size: 11.5px; cursor: pointer; }
+.jr-chip:hover { border-color: var(--accent); color: var(--ink); }
+.jr-chip.on { background: var(--accent); color: #191919; font-weight: bold; }
+
+#jr-body { height: calc(100vh - 400px); min-height: 300px; overflow-y: auto; }
+.jr-block { margin-bottom: 14px; }
+.jr-btitle { display: flex; gap: 8px; align-items: baseline; margin: 0 0 4px;
+             font-size: 13px; position: sticky; top: 0; background: var(--panel); padding: 4px 0;
+             border-bottom: 1px solid var(--line); z-index: 1; }
+.jr-rom { color: var(--accent); font-family: var(--mono); font-weight: bold; min-width: 34px; }
+/* The CARD is the one Links draws — same qStepHtml, every quote, every paragraph, the COND menu,
+   the foe's face. Journey only decides where it sits: stacked top down with a connector, the way
+   the Events flow reads a chain. Replacing the card with a one-line row was the mistake; the
+   arrangement was the ask. */
+.jr-cards { position: relative; padding-left: 16px; }
+.jr-card { position: relative; border: 1px solid transparent; border-radius: 8px; cursor: pointer; }
+.jr-card:hover { border-color: var(--line); }
+.jr-card.sel { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+/* the connector: a stub up out of every card but the first in its section */
+.jr-card.linked::before { content: ""; position: absolute; left: -8px; top: -11px; width: 1px;
+                          height: 12px; background: #4a5464; }
+.jr-cards::before { content: ""; position: absolute; left: 8px; top: 14px; bottom: 14px; width: 1px;
+                    background: #2f3743; }
+.jr-card .q-step { margin: 0; }
+/* a section change is a JOURNEY, so it gets its own dashed hand-over rather than a plain gap */
+.jr-travel { margin: 2px 0 10px 24px; padding-left: 12px; border-left: 1px dashed #4a5464;
+             color: var(--muted); font-size: 11.5px; }
+.jr-travel b { color: var(--ink); }
+
+/* ── building blocks: the palette of objects a shipped map is built out of ── */
+.blk-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 260px; overflow-y: auto;
+            padding: 2px; }
+.blk { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px;
+       border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: var(--bg); }
+.blk:hover { border-color: var(--accent); }
+.blk.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.blk.costs span { color: var(--accent); }
+.blk.blocked { opacity: .45; }
+.blk-cv { image-rendering: pixelated; display: block; }
+.blk span { font-size: 10.5px; }
+#blk-armed { margin-top: 6px; }
+#blk-armed b { color: var(--accent); }
+
+/* ═══════════════ BLOCKS — the library at World level ═══════════════ */
+/* two thirds library, one third editor: you spend most of the time LOOKING for the block */
+main.blw { display: grid; grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr); gap: 14px;
+           align-items: start; }
+main.blw > aside { width: auto; min-width: 0; }
+.bl-grid { display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start;
+           max-height: calc(100vh - 160px); overflow-y: auto; padding: 4px; }
+.bl-card { border: 1px solid var(--line); border-radius: 8px; padding: 6px; cursor: pointer;
+           background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.bl-card:hover { border-color: var(--accent); }
+.bl-card.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* yours, not mined — the library comes first in the grid and says so */
+.bl-card.lib { border-color: #4a6b52; }
+.bl-card.lib .bl-cap b { color: #7bd88f; font-weight: normal; font-size: 10px; }
+.bl-cv { image-rendering: pixelated; display: block; }
+.bl-cap { font-size: 11px; color: var(--ink); }
+.bl-side { max-height: calc(100vh - 160px); overflow-y: auto; }
+.bl-ops, .bl-where { margin: 2px 0 0 0; padding-left: 16px; font-size: 12px; color: var(--muted); }
+.bl-ops code { color: var(--accent); }
+
+/* ═══════════════ BAUKASTEN · PATTERNS ═══════════════ */
+/* Catalogue left, the shape you picked and its mask right — the same two-thirds/one-third habit as
+   the block library, mirrored, because here you spend the time FILLING one in rather than looking. */
+main.kitw { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 14px;
+            align-items: start; }
+main.kitw > aside { width: auto; min-width: 0; }
+.kit-list, .kit-work { max-height: calc(100vh - 160px); overflow-y: auto;
+                       overscroll-behavior: contain; }
+.kit-list { padding-right: 6px; }
+.kit-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px;
+            cursor: pointer; }
+.kit-card:hover { border-color: var(--accent); background: var(--bg); }
+.kit-card.on { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); background: var(--bg); }
+.kit-n { font-weight: 600; }
+.kit-holes { opacity: .7; margin-top: 3px; }
+/* a block came over from the other pane and is waiting to be built on — say so where the square is
+   entered, because that square means the block's corner and not the pattern's cell */
+.kit-onblock { border: 1px solid var(--accent); border-radius: 6px; padding: 6px 9px;
+               margin-bottom: 12px; font-size: 12.5px; }
+
+/* ── editing a block: its cells, and the tiles it carries ── */
+/* the block's own footprint IS the tile surface */
+.ble-grid { --blec: 48px; display: grid; gap: 2px; margin: 6px 0 10px; width: max-content; }
+.ble-cell { width: var(--blec); height: var(--blec); border: 1px solid var(--line); border-radius: 3px;
+            position: relative; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; background: var(--bg); }
+.ble-cell .ble-paint { position: absolute; right: 1px; bottom: 1px; opacity: 0; }
+.ble-cell:hover .ble-paint, .ble-cell.on .ble-paint { opacity: 1; }
+.ble-cell.empty { border-style: dashed; }
+.ble-cell.empty .ble-fill { opacity: .35; }
+.ble-cell.empty:hover .ble-fill { opacity: 1; }
+.ble-cell .ble-drop { position: absolute; left: 1px; bottom: 1px; opacity: 0; }
+.ble-cell:hover .ble-drop, .ble-cell.on .ble-drop { opacity: 1; }
+.ble-cell.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ble-cv, .ble-acv { image-rendering: pixelated; }
+.ble-arts { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.ble-art { position: relative; border: 1px solid var(--line); border-radius: 4px; padding: 3px;
+           cursor: pointer; background: var(--bg); }
+.ble-art:hover { border-color: var(--accent); }
+.ble-art.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.ble-paint { position: absolute; right: 1px; bottom: 1px; padding: 0 3px; font-size: 10px; }
+
+/* a line break in a string is a byte that costs budget — show it instead of collapsing it */
+.txt-reads { white-space: pre-wrap; }
+.txt-nl { color: var(--accent); opacity: .55; font-size: 11px; }
+
+/* ── Party tab: master-detail + lookup pickers + start block ── */
+.pa-md { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
+.pa-mrow { padding: 8px 10px; border: 1px solid #2a3140; border-radius: 6px; margin-bottom: 6px;
+  cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.pa-mrow:hover { border-color: #3d485c; }
+.pa-mrow.on { border-color: #e0a63c; background: #20242e; }
+.pa-detail { border: 1px solid #2a3140; border-radius: 6px; padding: 12px; }
+.pa-prow { display: flex; gap: 6px; margin: 3px 0; align-items: center; }
+.pa-prow select { flex: 1; min-width: 0; }
+.pa-prow input { width: 58px; }
+.pa-equip { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#pa-start { grid-column: 1 / -1; margin-top: 16px; }
+#pa-start .pa-card { max-width: none; }
+.pa-detail { min-width: 0; }
+.pa-detail .pa-attrs, .pa-detail .pa-nums { flex-wrap: wrap; display: flex; gap: 6px; }
+.pa-cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; }
+
+/* GFX tab — title-overlay graphics preview */
+#gfx-side { min-width: 320px; }
+.gfx-big { max-width: 100%; image-rendering: pixelated; border: 1px solid var(--line);
+  border-radius: 6px; background: #000; margin: 8px 0; display: block; }
+
+/* Title-graphics pane — grows to fill the wide layout; the shared picture editor (openAnimEditor)
+   is mounted as a sibling of #gfx-view inside #gfx-side, so it reuses the portrait editor styling */
+#gfx-side, #endings-side { flex: 1 1 auto; min-width: 340px; }
+
+/* World panel: consequences of a byte the engine cannot honour (minutes/step > 59, a heal weight
+   whose gcd with 16 makes it the slowest setting while looking like the biggest). Not save errors
+   — nothing refuses them — so they have to be loud where they are typed. */
+.world-warn { margin: 6px 0 2px; font-size: 12px; line-height: 1.45; }
+.world-warn div { border-left: 3px solid var(--warn, #d9a441); padding: 3px 0 3px 10px;
+                  color: var(--warn, #d9a441); margin-bottom: 4px; }
+/* the per-field consequence line sits under its number, so it wraps instead of stretching the row */
+.panel-row .wf-t { display: block; flex-basis: 100%; margin-left: 0; opacity: .85; }
+
+/* PNG import — draggable crop frame. The picture is shown at an integer zoom so a source pixel
+   stays a whole number of screen pixels; the frame is the WxH box that will actually be read, and
+   everything outside it is dimmed by one huge box-shadow rather than four spacer divs. */
+.pe-crop .overlay-box { width: auto; }
+.pe-crop-stage { position: relative; align-self: center; line-height: 0; background: #000; }
+.pe-crop-stage img { image-rendering: pixelated; display: block; }
+.pe-crop-frame { position: absolute; box-sizing: border-box; cursor: move;
+  border: 1px solid #6cf; outline: 1px dashed #000c; outline-offset: -1px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .72); }
+.pe-crop-frame:focus { border-color: #9df; }
+.pe-crop-info { min-height: 1.2em; }

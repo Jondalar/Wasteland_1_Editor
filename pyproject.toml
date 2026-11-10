@@ -1,0 +1,12 @@
+[project]
+name = "wl1-editor"
+version = "0.1.0"
+description = "A data editor for Wasteland (1988, C64) — maps, area scripts, items, texts, portraits"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Alex Damhuis" }]
+dependencies = ["fastapi==0.115.6", "uvicorn[standard]==0.34.0", "Pillow==11.0.0"]
+
+[tool.setuptools]
+packages = []

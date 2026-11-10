@@ -1,0 +1,43 @@
+WL1 Editor
+Copyright (c) 2026 Alex Damhuis (DKL / TREX)
+
+The MIT License in LICENSE covers THIS PROJECT'S OWN WORK: the editor, the codecs, the
+extraction tools, and the documentation written here. It does not, and cannot, cover the
+following — read this before you redistribute anything you produce with it.
+
+
+THE GAME IS NOT COVERED
+
+Wasteland is Copyright (c) 1988 Interplay Productions / Electronic Arts.
+
+No game content is distributed in this repository — no disk images, no maps, no graphics, no
+text, and no item or skill names. Everything the editor displays is decoded on your own
+machine, from disk images you already own, by bootstrap.py.
+
+Data you extract or edit with this tool remains the rights holders'. The MIT grant lets you
+copy and modify the EDITOR. It grants you nothing regarding Wasteland itself, and nothing in
+this project should be read as an invitation to share game files.
+
+
+THIRD-PARTY REFERENCE MATERIAL
+
+Two tables in this codebase were cross-checked against outside sources rather than derived
+solely from the disks. They are attributed here so the provenance is not lost:
+
+  * backend/wl_item.py — the item TYPE and CLASS enumerations follow the analysis published in
+    wastelib by Klaus Reimer (https://github.com/kayahr/wastelib). Structural facts about the
+    file format, arrived at independently but confirmed against that work.
+
+  * backend/wl_cell.py — the weapon statistics table was cross-checked against the
+    "Nearly Ultimate Wasteland Guide", a fan-maintained document. The numbers are balance data
+    read out of the game; the guide served as a second opinion, not as the source.
+
+If either table is ever expanded by copying from those sources rather than from the game's own
+bytes, the licensing of that source needs to be settled first.
+
+
+REVERSE ENGINEERING
+
+The formats here were reverse-engineered from a legally owned copy for the purpose of
+interoperability — reading and writing the game's own data files. That is the entire scope of
+this project.

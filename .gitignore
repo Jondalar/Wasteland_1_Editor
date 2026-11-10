@@ -1,0 +1,32 @@
+# ── GAME DATA — never, under any circumstances ───────────────────────────────────────
+# This repository ships no Wasteland content. data/ is produced on each user's machine by
+# bootstrap.py from their own disk images, and must never be committed. The patterns below
+# are deliberately broader than data/: a stray .g64 or a decoded .bin anywhere in the tree
+# is a mistake, and tools/check_clean.py fails the build if one is ever staged.
+data/
+data_a2/
+*.g64
+*.d64
+*.d81
+*.t64
+*.tap
+*.dsk
+*.po
+*.nib
+*.2mg
+*.woz
+*.crt
+*.prg
+*.bin
+*.wlsave
+names.json
+
+# ── ordinary noise ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log
+.DS_Store
+._*
